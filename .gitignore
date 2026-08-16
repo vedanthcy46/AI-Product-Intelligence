@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# LLM extraction cache (re-run safety, regenerable)
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# SQLite (Phase 3)
+*.db
+*.sqlite3
+
+# Node / Next.js (Phase 5)
+node_modules/
+.next/
+
+# OS junk
+.DS_Store
+Thumbs.db
