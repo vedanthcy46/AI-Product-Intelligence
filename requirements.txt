@@ -1,3 +1,4 @@
-﻿pydantic
+pydantic
 pandas
 openpyxl
+groq
