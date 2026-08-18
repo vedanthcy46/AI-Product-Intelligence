@@ -1,0 +1,50 @@
+﻿# ── Secrets / environment ─────────────────────────────────────────────────────
+.env
+.env.*
+
+# ── LLM extraction cache (re-run safety, regenerable) ────────────────────────
+.cache/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# ── SQLite (Phase 3) ──────────────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ── Node / Next.js (Phase 5) ──────────────────────────────────────────────────
+node_modules/
+.next/
+
+# ── Generated CSV / output artifacts (scratch pipeline outputs) ───────────────
+scratch/*.csv
+
+# ── Scratch helper scripts (run-once build/generation scripts, not test code) ──
+scratch/build_docs.py
+scratch/run_master_verification.py
+scratch/run_1000_row_structural_evaluation.py
+scratch/YASHAS_TRACK_AUDIT_RUNNER.py
+scratch/write_attributes.py
+scratch/write_confidence.py
+scratch/write_evaluation.py
+scratch/write_fractions.py
+scratch/write_output.py
+scratch/write_validation.py
+scratch/test_all.py
+scratch/test_mapper.py
+scratch/test_output.py
+scratch/run_exact_audit_answers.py
+
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*.swo
+# ── Data / reference CSVs (large input files, not source code) ───────────────
+data/
