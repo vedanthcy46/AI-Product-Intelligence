@@ -1,5 +1,7 @@
 import sys
-sys.path.insert(0, r"C:\Users\Yashas BR\OneDrive\Desktop\Hack2skills")
+import os
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 from src.validation.validator import validate_product
 from src.validation.confidence import compute_confidence

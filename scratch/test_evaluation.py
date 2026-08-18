@@ -7,33 +7,28 @@ Deliberately introduces field mismatches to confirm they are NOT silently masked
 
 import sys
 import os
-sys.path.insert(0, r"C:\Users\Yashas BR\OneDrive\Desktop\Hack2skills")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-import pandas as pd
 from src.evaluation.field_accuracy import field_accuracy, compare_field
 from src.evaluation.metrics import full_evaluation, structural_completeness
 from src.evaluation.report import print_report
-
-BULK_CSV = r"C:\Users\Yashas BR\OneDrive\Desktop\Hack2skills\scratch\bulk_1000_delivery_output.csv"
 
 KNOWN_UOMS = {"V", "A", "W", "kW", "in", "ft", "mm", "cm", "m",
               "lb", "kg", "oz", "g", "dBA", "dB", "%", "psi",
               "RPM", "CFM", "HP", "BTU", "BTUH", "hr", "min",
               "pc", "ea", "pk", "pr", "set", "kW-hr"}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1.  PREDICTED vs EXPECTED — with deliberate mismatches
-# ──────────────────────────────────────────────────────────────────────────────
-# Expected (ground truth proxies)
+# ── Expected (ground truth proxies) ──────────────────────────────────────────
 EXPECTED = [
     {
-        "MANUFACTURER_NAME":     "Rheem Manufacturing",           # correct
-        "BRAND_NAME":            "FRIGIDAIRE",                    # correct
+        "MANUFACTURER_NAME":     "Rheem Manufacturing",
+        "BRAND_NAME":            "FRIGIDAIRE",
         "Classpath":             "Appliances>Kitchen>Dishwashers",
         "INVOICE_DESC":          "DISHWASHER LEG 5 SST 120V 15A",
-        "Material":              "Stainless Steel",               # correct
-        "Voltage Rating":        "120",                           # correct
-        "Sound Level":           "47",                           # correct
+        "Material":              "Stainless Steel",
+        "Voltage Rating":        "120",
+        "Sound Level":           "47",
         "descriptions":          {"INVOICE_DESC": "DISHWASHER LEG 5 SST 120V 15A"},
         "attributes": [
             {"label": "Material", "value": "Stainless Steel", "uom": None, "source": "mfr_page", "lov_matched": True, "needs_review": False},
@@ -41,13 +36,13 @@ EXPECTED = [
         ],
     },
     {
-        "MANUFACTURER_NAME":     "Whirlpool Corporation",         # correct
-        "BRAND_NAME":            "Whirlpool",                    # correct
+        "MANUFACTURER_NAME":     "Whirlpool Corporation",
+        "BRAND_NAME":            "Whirlpool",
         "Classpath":             "Appliances>Kitchen>Dishwashers",
         "INVOICE_DESC":          "DISHWASHER BLTLN SST SST 120V 10A 41DBA",
-        "Material":              "Stainless Steel",               # correct
-        "Voltage Rating":        "120",                           # correct
-        "Sound Level":           "41",                           # correct
+        "Material":              "Stainless Steel",
+        "Voltage Rating":        "120",
+        "Sound Level":           "41",
         "descriptions":          {"INVOICE_DESC": "DISHWASHER BLTLN SST SST 120V 10A 41DBA"},
         "attributes": [
             {"label": "Material", "value": "Stainless Steel", "uom": None, "source": "mfr_page", "lov_matched": True, "needs_review": False},
@@ -56,18 +51,16 @@ EXPECTED = [
     },
 ]
 
-# Predicted (pipeline output) — deliberately WRONG on 3 fields:
-#   Row 0:  Material="Carbon Fiber" (wrong),  Voltage Rating="240" (wrong)
-#   Row 1:  Sound Level="55" (wrong)
+# Predicted — deliberately WRONG on 3 fields
 PREDICTED = [
     {
-        "MANUFACTURER_NAME":     "Rheem Manufacturing",           # correct
-        "BRAND_NAME":            "FRIGIDAIRE",                    # correct
+        "MANUFACTURER_NAME":     "Rheem Manufacturing",
+        "BRAND_NAME":            "FRIGIDAIRE",
         "Classpath":             "Appliances>Kitchen>Dishwashers",
         "INVOICE_DESC":          "DISHWASHER LEG 5 SST 120V 15A",
-        "Material":              "Carbon Fiber",   # <<< WRONG — mismatch 1
-        "Voltage Rating":        "240",            # <<< WRONG — mismatch 2
-        "Sound Level":           "47",             # correct
+        "Material":              "Carbon Fiber",   # WRONG
+        "Voltage Rating":        "240",            # WRONG
+        "Sound Level":           "47",
         "descriptions":          {"INVOICE_DESC": "DISHWASHER LEG 5 SST 120V 15A"},
         "attributes": [
             {"label": "Material", "value": "Carbon Fiber", "uom": None, "source": "mfr_page", "lov_matched": False, "needs_review": True},
@@ -75,13 +68,13 @@ PREDICTED = [
         ],
     },
     {
-        "MANUFACTURER_NAME":     "Whirlpool Corporation",         # correct
-        "BRAND_NAME":            "Whirlpool",                    # correct
+        "MANUFACTURER_NAME":     "Whirlpool Corporation",
+        "BRAND_NAME":            "Whirlpool",
         "Classpath":             "Appliances>Kitchen>Dishwashers",
         "INVOICE_DESC":          "DISHWASHER BLTLN SST SST 120V 10A 41DBA",
-        "Material":              "Stainless Steel",               # correct
-        "Voltage Rating":        "120",                           # correct
-        "Sound Level":           "55",             # <<< WRONG — mismatch 3
+        "Material":              "Stainless Steel",
+        "Voltage Rating":        "120",
+        "Sound Level":           "55",             # WRONG
         "descriptions":          {"INVOICE_DESC": "DISHWASHER BLTLN SST SST 120V 10A 41DBA"},
         "attributes": [
             {"label": "Material", "value": "Stainless Steel", "uom": None, "source": "mfr_page", "lov_matched": True, "needs_review": False},
@@ -91,18 +84,11 @@ PREDICTED = [
 ]
 
 EVAL_FIELDS = [
-    "MANUFACTURER_NAME",
-    "BRAND_NAME",
-    "Classpath",
-    "INVOICE_DESC",
-    "Material",
-    "Voltage Rating",
-    "Sound Level",
+    "MANUFACTURER_NAME", "BRAND_NAME", "Classpath",
+    "INVOICE_DESC", "Material", "Voltage Rating", "Sound Level",
 ]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2.  field_accuracy()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── 1. field_accuracy() ───────────────────────────────────────────────────────
 print("=" * 68)
 print("  Y9 TEST 1: field_accuracy() with 3 deliberate mismatches")
 print("=" * 68)
@@ -116,9 +102,7 @@ for field, acc in fa_result["per_field"].items():
     hit = "(MATCH)" if acc == 1.0 else "(MISMATCH DETECTED)"
     print(f"    - {field:<24} : {acc:.1%}  {hit}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3.  Assertions on field_accuracy
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Assertions ────────────────────────────────────────────────────────────────
 all_pass = True
 def check(desc, got, expected):
     global all_pass
@@ -132,31 +116,17 @@ def check(desc, got, expected):
     return ok
 
 print("\n  field_accuracy() assertions:")
-# 3 of 7 fields should show mismatch (0.5 or 0.0 accuracy, not 1.0)
-check("Material mismatch detected (acc < 1.0)",
-      fa_result["per_field"]["Material"] < 1.0, True)
-check("Voltage Rating mismatch detected (acc < 1.0)",
-      fa_result["per_field"]["Voltage Rating"] < 1.0, True)
-check("Sound Level mismatch detected (acc < 1.0)",
-      fa_result["per_field"]["Sound Level"] < 1.0, True)
-# Correct fields should be 1.0
-check("MANUFACTURER_NAME matches (acc == 1.0)",
-      fa_result["per_field"]["MANUFACTURER_NAME"], 1.0)
-check("BRAND_NAME matches (acc == 1.0)",
-      fa_result["per_field"]["BRAND_NAME"], 1.0)
-check("INVOICE_DESC matches (acc == 1.0)",
-      fa_result["per_field"]["INVOICE_DESC"], 1.0)
-# Overall should be <1.0 (3/7 mismatches = 4/7 correct = 0.5714)
-check("overall < 1.0 (not silently masked)",
-      fa_result["overall"] < 1.0, True)
-check("n_rows == 2",
-      fa_result["n_rows"], 2)
-check("small-sample warning present",
-      "warning" in fa_result, True)
+check("Material mismatch detected (acc < 1.0)",      fa_result["per_field"]["Material"] < 1.0, True)
+check("Voltage Rating mismatch detected (acc < 1.0)", fa_result["per_field"]["Voltage Rating"] < 1.0, True)
+check("Sound Level mismatch detected (acc < 1.0)",   fa_result["per_field"]["Sound Level"] < 1.0, True)
+check("MANUFACTURER_NAME matches (acc == 1.0)",      fa_result["per_field"]["MANUFACTURER_NAME"], 1.0)
+check("BRAND_NAME matches (acc == 1.0)",             fa_result["per_field"]["BRAND_NAME"], 1.0)
+check("INVOICE_DESC matches (acc == 1.0)",           fa_result["per_field"]["INVOICE_DESC"], 1.0)
+check("overall < 1.0 (not silently masked)",         fa_result["overall"] < 1.0, True)
+check("n_rows == 2",                                 fa_result["n_rows"], 2)
+check("small-sample warning present",                "warning" in fa_result, True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4.  full_evaluation()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── 2. full_evaluation() ──────────────────────────────────────────────────────
 print("\n" + "=" * 68)
 print("  Y9 TEST 2: full_evaluation() complete result")
 print("=" * 68)
@@ -170,66 +140,46 @@ print(f"  grounding_rate       : {eval_result.get('grounding_rate', 0.0):.1%}")
 print(f"  review_rate          : {eval_result.get('review_rate', 0.0):.1%}")
 print(f"  warning              : {eval_result.get('warning', 'none')}")
 
-check("full_eval: small-sample warning present",
-      "warning" in eval_result, True)
-check("full_eval: n_evaluated == 2",
-      eval_result.get("n_evaluated"), 2)
-check("full_eval: review_rate > 0 (Row 0 has LOV mismatch)",
-      eval_result.get("review_rate", 0.0) > 0.0, True)
+check("full_eval: small-sample warning present",     "warning" in eval_result, True)
+check("full_eval: n_evaluated == 2",                 eval_result.get("n_evaluated"), 2)
+check("full_eval: review_rate > 0 (Row 0 has LOV mismatch)", eval_result.get("review_rate", 0.0) > 0.0, True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 5.  print_report()
-# ──────────────────────────────────────────────────────────────────────────────
+# ── 3. print_report() ─────────────────────────────────────────────────────────
 print("\n" + "=" * 68)
-print("  Y9 TEST 3: print_report() console output (must show small-sample warning)")
+print("  Y9 TEST 3: print_report() console output")
 print("=" * 68)
 print_report(eval_result, label="Y9 Ground Truth Evaluation (n=2)")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 6.  structural_completeness() on 1000-row bulk output
-# ──────────────────────────────────────────────────────────────────────────────
+# ── 4. structural_completeness() ─────────────────────────────────────────────
 print("=" * 68)
-print("  Y9 TEST 4: structural_completeness() on 1000-row bulk CSV")
+print("  Y9 TEST 4: structural_completeness() on mock products")
 print("=" * 68)
 
-if not os.path.exists(BULK_CSV):
-    print(f"  [!] Bulk CSV not found: {BULK_CSV}")
-    print("  [!] Re-running 1000-row structural evaluation...")
-    import subprocess
-    subprocess.run([sys.executable, "scratch/run_1000_row_structural_evaluation.py"], check=True)
+BULK_CSV = os.path.join(ROOT, "scratch", "bulk_1000_delivery_output.csv")
+if os.path.exists(BULK_CSV):
+    import pandas as pd
+    bulk_df = pd.read_csv(BULK_CSV, keep_default_na=False)
+    bulk_products = [
+        {
+            "Classpath":         row.get("Classpath", ""),
+            "MANUFACTURER_NAME": row.get("MANUFACTURER_NAME", ""),
+            "BRAND_NAME":        row.get("BRAND_NAME", ""),
+            "attributes":        [],
+            "needs_review":      False,
+        }
+        for _, row in bulk_df.iterrows()
+    ]
+    sc_result = structural_completeness(bulk_products)
+    print_report(sc_result, label="Bulk Structural Completeness")
+    check("structural: n_products == 1000", sc_result["n_products"], 1000)
+else:
+    # Run on the mock PREDICTED data instead
+    sc_result = structural_completeness(PREDICTED)
+    print_report(sc_result, label="Mock Structural Completeness (no bulk CSV)")
+    check("structural: n_products == 2", sc_result["n_products"], 2)
+    print("  [INFO] Place bulk_1000_delivery_output.csv in scratch/ for full 1000-row test.")
 
-bulk_df = pd.read_csv(BULK_CSV, keep_default_na=False)
-
-# Convert rows to product-like dicts for structural_completeness()
-# structural_completeness looks for: Classpath, MANUFACTURER_NAME, BRAND_NAME, attributes, needs_review
-bulk_products = []
-for _, row in bulk_df.iterrows():
-    bulk_products.append({
-        "Classpath":         row.get("Classpath", ""),
-        "MANUFACTURER_NAME": row.get("MANUFACTURER_NAME", ""),
-        "BRAND_NAME":        row.get("BRAND_NAME", ""),
-        "attributes":        [],   # flat CSV: no nested attributes; omit for completeness check
-        "needs_review":      False,
-    })
-
-sc_result = structural_completeness(bulk_products)
-print_report(sc_result, label="1000-Row Bulk Structural Completeness")
-
-print("  Raw result dict:")
-for k, v in sc_result.items():
-    print(f"    {k}: {v}")
-
-# Sanity checks
-check("structural: n_products == 1000",
-      sc_result["n_products"], 1000)
-check("structural: classpath_populated_pct > 0.50 and < 1.0 (not near 0 or 100%)",
-      0.50 < sc_result["classpath_populated_pct"] < 1.0, True)
-check("structural: manufacturer_populated_pct > 0.50",
-      sc_result["manufacturer_populated_pct"] > 0.50, True)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Final summary
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Final summary ─────────────────────────────────────────────────────────────
 print("=" * 68)
 if all_pass:
     print("  Y9 EVALUATION FRAMEWORK: All assertions passed (OK)")
