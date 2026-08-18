@@ -19,7 +19,7 @@ from typing import Optional
 from src.attributes.schema import Attribute
 from src.normalization.uom import normalize_uom
 from src.normalization.lov import normalize_attribute_value
-from src.normalization.fractions import decimal_to_fraction
+from src.normalization.fraction_utils import decimal_to_fraction
 
 # Confidence threshold below which a value is automatically flagged.
 CONFIDENCE_THRESHOLD: float = 0.7

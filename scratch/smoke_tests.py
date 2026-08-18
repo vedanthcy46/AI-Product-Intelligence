@@ -4,7 +4,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from src.normalization.uom import normalize_measurement
-from src.normalization.fractions import decimal_to_fraction, fraction_to_decimal
+from src.normalization.fraction_utils import decimal_to_fraction, fraction_to_decimal
 from src.normalization.lov import normalize_attribute_value
 
 print("=" * 72)
