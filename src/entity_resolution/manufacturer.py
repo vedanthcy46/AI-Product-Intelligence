@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import re
 import os
+import logging
 from dataclasses import dataclass
 from typing import Optional
+
 import pandas as pd
-from difflib import SequenceMatcher
+
+from src.entity_resolution._utils import normalize, similarity, coerce_code
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -36,33 +41,12 @@ class ManufacturerMatch:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _normalize(s: str) -> str:
-    """Lowercase, collapse punctuation/extra spaces for comparison."""
-    s = s.lower()
-    s = re.sub(r"[^a-z0-9 ]", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def _similarity(a: str, b: str) -> float:
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def _coerce_code(value: str) -> Optional[str]:
-    """Return None for blank/missing codes instead of empty string."""
-    v = value.strip()
-    return v if v else None
-
-
-# ---------------------------------------------------------------------------
 # Resolver
 # ---------------------------------------------------------------------------
 
 class ManufacturerResolver:
     FUZZY_THRESHOLD = 0.82   # below this → accepted but flagged for review
-    REVIEW_THRESHOLD = 0.70  # below this → not accepted at all, go to LLM
+    REVIEW_THRESHOLD = 0.70  # below this → not accepted, escalate to LLM
 
     def __init__(self, master_path: str):
         """
@@ -72,32 +56,34 @@ class ManufacturerResolver:
         df = pd.read_excel(master_path, dtype=str).fillna("")
         df.columns = [c.strip() for c in df.columns]
 
-        name_col = next(
-            (c for c in df.columns if "manufacturer" in c.lower() and "name" in c.lower()),
-            df.columns[0],
-        )
-        code_col = next(
-            (c for c in df.columns if "code" in c.lower()),
-            None,
-        )
+        name_col = self._find_col(df.columns, ["manufacturer", "name"], df.columns[0])
+        code_col = self._find_col(df.columns, ["code"], None)
 
         names: list[str] = df[name_col].tolist()
         codes: list[Optional[str]] = (
-            [_coerce_code(v) for v in df[code_col]] if code_col else [None] * len(names)
+            [coerce_code(v) for v in df[code_col]] if code_col else [None] * len(names)
         )
-        norm_names: list[str] = [_normalize(n) for n in names]
+        norm_names: list[str] = [normalize(n) for n in names]
 
-        # O(1) lookup dicts for exact and normalized matching
+        # O(1) lookup dicts — first occurrence wins on normalized collision
         self._exact_map: dict[str, int] = {n: i for i, n in enumerate(names)}
         self._norm_map: dict[str, int] = {}
         for i, n in enumerate(norm_names):
-            if n not in self._norm_map:   # first occurrence wins on collision
+            if n not in self._norm_map:
                 self._norm_map[n] = i
 
-        # Keep lists for fuzzy scan
         self._names = names
         self._codes = codes
         self._norm_names = norm_names
+
+    @staticmethod
+    def _find_col(columns: list[str], keywords: list[str], default) -> Optional[str]:
+        """Return the first column whose name contains ALL keywords (case-insensitive)."""
+        for col in columns:
+            col_lower = col.lower()
+            if all(kw in col_lower for kw in keywords):
+                return col
+        return default
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -108,7 +94,6 @@ class ManufacturerResolver:
             return ManufacturerMatch(None, None, 0.0, "unresolved", True)
 
         raw = raw.strip()
-
         return (
             self._exact(raw)
             or self._normalized(raw)
@@ -132,21 +117,21 @@ class ManufacturerResolver:
     # ------------------------------------------------------------------
 
     def _normalized(self, raw: str) -> Optional[ManufacturerMatch]:
-        i = self._norm_map.get(_normalize(raw))
+        i = self._norm_map.get(normalize(raw))
         if i is None:
             return None
         return ManufacturerMatch(self._names[i], self._codes[i], 0.97, "normalized", False)
 
     # ------------------------------------------------------------------
-    # Step 3 — Fuzzy  O(n) — returns top match with score
+    # Step 3 — Fuzzy  O(n)
     # ------------------------------------------------------------------
 
     def _fuzzy(self, raw: str) -> Optional[ManufacturerMatch]:
-        norm_raw = _normalize(raw)
+        norm_raw = normalize(raw)
         best_score, best_idx = 0.0, -1
 
         for i, norm in enumerate(self._norm_names):
-            score = _similarity(norm_raw, norm)
+            score = similarity(norm_raw, norm)
             if score > best_score:
                 best_score, best_idx = score, i
 
@@ -181,11 +166,10 @@ class ManufacturerResolver:
         if not api_key:
             return None
 
-        # Reuse fuzzy scores to build candidate list — no duplicate scan
-        norm_raw = _normalize(raw)
+        norm_raw = normalize(raw)
         top5 = sorted(
             range(len(self._norm_names)),
-            key=lambda i: _similarity(norm_raw, self._norm_names[i]),
+            key=lambda i: similarity(norm_raw, self._norm_names[i]),
             reverse=True,
         )[:5]
         candidates = [self._names[i] for i in top5]
@@ -208,17 +192,15 @@ class ManufacturerResolver:
                 temperature=0,
             )
             answer = response.choices[0].message.content.strip()
-        except Exception:
+        except Exception as e:
+            logger.error("LLM manufacturer resolution failed: %s", e)
             return None
 
         if answer.upper() == "NONE":
             return None
 
-        # Strip any leading bullet the model may echo back ("- Name" → "Name")
         answer = re.sub(r"^[-•*]\s*", "", answer).strip()
-
-        norm_answer = _normalize(answer)
-        i = self._norm_map.get(norm_answer)
+        i = self._norm_map.get(normalize(answer))
         if i is not None:
             return ManufacturerMatch(self._names[i], self._codes[i], 0.80, "llm", False)
 
