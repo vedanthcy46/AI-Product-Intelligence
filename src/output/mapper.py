@@ -10,15 +10,22 @@ import re
 import pandas as pd
 from typing import Dict, List, Optional, Any
 
-EXPECTED_OUTPUT_CSV = r"C:\Users\Yashas BR\OneDrive\Desktop\Hack2skills\data\reference\Unihack_ Expected Output - Delivery Format.csv"
+# Resolve reference file path from env var → project-relative default → legacy hardcoded path.
+# Set DELIVERY_FORMAT_PATH in your .env or environment to override.
+_DEFAULT_REFERENCE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "reference", "Unihack_ Expected Output - Delivery Format.csv",
+)
+EXPECTED_OUTPUT_CSV: str = os.getenv("DELIVERY_FORMAT_PATH", _DEFAULT_REFERENCE)
 
 _CACHED_HEADERS: Optional[List[str]] = None
 
 
 def get_expected_headers(headers_path: Optional[str] = None) -> List[str]:
     """
-    Load the exact 252-column header list directly from the delivery format reference file.
-    Caches the headers in memory.
+    Load the exact 252-column header list from the delivery format reference file.
+    Resolution order: explicit argument → DELIVERY_FORMAT_PATH env var → project-relative default.
+    Caches the result in memory after first load.
     """
     global _CACHED_HEADERS
     if _CACHED_HEADERS is not None and headers_path is None:
@@ -26,7 +33,10 @@ def get_expected_headers(headers_path: Optional[str] = None) -> List[str]:
 
     path = headers_path or EXPECTED_OUTPUT_CSV
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Reference delivery format not found at: {path}")
+        raise FileNotFoundError(
+            f"Delivery format reference file not found at: {path}\n"
+            f"Set the DELIVERY_FORMAT_PATH environment variable to the correct path."
+        )
 
     df = pd.read_csv(path, nrows=0, encoding="utf-8")
     headers = df.columns.tolist()
@@ -155,10 +165,10 @@ def product_to_row(product: Dict[str, Any], headers: Optional[List[str]] = None)
         "RETAIL_DESC",
         "MARKETING_DESCRIPTION",
     ]
-    for df in desc_fields:
-        if df in row:
-            val = descs.get(df) if isinstance(descs, dict) else product.get(df)
-            row[df] = str(val or "").strip()
+    for field_key in desc_fields:
+        if field_key in row:
+            val = descs.get(field_key) if isinstance(descs, dict) else product.get(field_key)
+            row[field_key] = str(val or "").strip()
 
     # ── 6. Features (ITEM_FEATURES_1..20) ───────────────────────────────────
     features = product.get("features", [])
