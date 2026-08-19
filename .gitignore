@@ -48,3 +48,6 @@ Thumbs.db
 *.swo
 # ── Data / reference CSVs (large input files, not source code) ───────────────
 data/
+
+# ── Generated frontend data snapshots (pipeline output, regenerable) ─────────
+frontend/data/
