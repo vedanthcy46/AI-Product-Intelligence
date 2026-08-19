@@ -1,6 +1,6 @@
 ﻿# ── Secrets / environment ─────────────────────────────────────────────────────
 .env
-.env.*
+.env.local
 
 # ── LLM extraction cache (re-run safety, regenerable) ────────────────────────
 .cache/

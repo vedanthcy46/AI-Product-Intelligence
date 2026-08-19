@@ -1,3 +1,6 @@
-﻿pydantic
+pydantic
 pandas
 openpyxl
+groq
+requests
+beautifulsoup4
