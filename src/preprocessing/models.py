@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
+import pandas as pd
 
 # Placeholder values that should be treated as empty
 _PLACEHOLDERS = {
@@ -15,9 +16,9 @@ _PLACEHOLDERS = {
 
 def _clean(value: Optional[str]) -> Optional[str]:
     """Strip whitespace; return None for placeholder/empty values."""
-    if value is None:
+    if pd.isna(value) if isinstance(value, float) else value is None:
         return None
-    v = value.strip()
+    v = str(value).strip()
     if v.lower() in _PLACEHOLDERS:
         return None
     return v or None
