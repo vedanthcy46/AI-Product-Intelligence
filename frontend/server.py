@@ -53,6 +53,7 @@ from flask import Flask, request, jsonify, send_from_directory
 
 from src.pipeline.batch import process_batch
 from src.preprocessing.models import ProductInput
+from src.preprocessing.columns import normalize_columns
 from src.validation.validator import validate_product
 from src.validation.confidence import compute_confidence
 from src.entity_resolution.manufacturer import ManufacturerResolver
@@ -144,13 +145,21 @@ def compute_metrics(products):
 def _load_input(path):
     import pandas as pd
     if path.lower().endswith((".xlsx", ".xls")):
-        return pd.read_excel(path, dtype=str)
-    return pd.read_csv(path, encoding="utf-8")
+        df = pd.read_excel(path, dtype=str)
+    else:
+        df = pd.read_csv(path, encoding="utf-8")
+    # Map arbitrary real-world headers ("Part Number", "Description", ...)
+    # onto the canonical six-field schema. Raises ValueError when nothing
+    # recognizable exists — surfaced to the user by the caller.
+    normalized, report = normalize_columns(df)
+    normalized.attrs["column_map"] = report
+    return normalized
 
 
 def _run_pipeline(input_path, limit):
     """Run the pipeline on an input file and refresh frontend/data/*.json."""
     raw = _load_input(input_path)
+    col_report = raw.attrs.get("column_map") or {}
     master_path = MASTER if os.path.exists(MASTER) else None
 
     delivery_csv = os.path.join(
@@ -170,6 +179,22 @@ def _run_pipeline(input_path, limit):
 
     with open(INTERNAL_JSON, encoding="utf-8") as f:
         products = json.load(f)
+
+    # Guardrail: if EVERY row came back with no part number AND no
+    # description, the input columns were not recognized — fail loudly and
+    # keep the previous dashboard snapshot instead of overwriting it with
+    # an empty catalogue.
+    identity_empty = sum(
+        1 for p in products if not (p.get("mfg_part_num") or "").strip()
+        and not (p.get("part_desc") or "").strip()
+    )
+    if products and identity_empty == len(products):
+        raise ValueError(
+            f"All {len(products)} processed rows came back empty — the uploaded "
+            "file's columns were not recognized. Expected headers like "
+            "'Part Number'/'MPN', 'Description', 'Brand', 'Manufacturer'."
+        )
+
     metrics = compute_metrics(products)
 
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -178,7 +203,7 @@ def _run_pipeline(input_path, limit):
     with open(os.path.join(DATA_DIR, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
-    return len(products), elapsed, metrics, delivery_csv
+    return len(products), elapsed, metrics, delivery_csv, col_report
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +245,11 @@ def api_process():
 
     _job_update(running=True, done=0, total=limit or len(df), started_at=time.time())
     try:
-        n_rows, elapsed, metrics, csv_path = _run_pipeline(save_path, limit)
+        n_rows, elapsed, metrics, csv_path, col_report = _run_pipeline(save_path, limit)
+    except ValueError as e:
+        # Unrecognizable header schema — a 4xx, not a server fault.
+        app.logger.warning("Rejected upload '%s': %s", upload.filename, e)
+        return jsonify(error=str(e)), 400
     except Exception as e:
         app.logger.exception("Pipeline failed")
         return jsonify(error=f"Pipeline failed: {e}"), 500
@@ -234,6 +263,7 @@ def api_process():
         elapsed_s=round(elapsed, 1),
         metrics=metrics,
         enriched_csv=os.path.relpath(csv_path, ROOT),
+        column_map=col_report,
     )
 
 
@@ -257,7 +287,8 @@ def api_status():
     # otherwise the pipeline silently runs without enrichment.
     llm_ready = bool(os.getenv("GROQ_API_KEY")) and groq_installed
     return jsonify(ready=has_data, n_products=n, master_ready=master_ready,
-                   llm_ready=llm_ready, groq_installed=groq_installed)
+                   llm_ready=llm_ready, groq_installed=groq_installed,
+                   flexible_headers=True)
 
 
 def _product_key(p):
@@ -339,7 +370,7 @@ def main():
     if not os.path.exists(os.path.join(DATA_DIR, "products.json")) and os.path.exists(INPUT_CSV):
         print("No frontend/data snapshot found — processing the sample input once...")
         try:
-            n, elapsed, _, _ = _run_pipeline(INPUT_CSV, limit=25)
+            n, elapsed, _, _, _ = _run_pipeline(INPUT_CSV, limit=25)
             print(f"Seeded {n} products in {elapsed:.1f}s")
         except Exception as e:
             print(f"Seeding failed ({e}); start via Upload instead.")

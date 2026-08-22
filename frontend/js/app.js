@@ -72,10 +72,18 @@ function verdictBanner(p) {
   return `<div class="banner-warn">✎ Edited${when} — corrections saved, still awaiting a final Accept/Reject decision.</div>`;
 }
 
+function isWebSource(src) {
+  return /^https?:\/\//i.test(String(src || ""));
+}
+
 function attrStatus(attr) {
   if (attr.needs_review) return '<span class="flag-warn">⚠ Needs Review</span>';
   if (attr.value == null) return '<span class="flag-ok">— empty (OK)</span>';
-  const grounded = attr.source ? '<span class="flag-ok">✓ grounded</span>' : '<span class="flag-warn">no source</span>';
+  const src = String(attr.source || "");
+  const grounded = isWebSource(src)
+    ? '<span class="flag-ok">✓ grounded</span>'
+    : src ? '<span class="flag-warn">desc only</span>'
+          : '<span class="flag-warn">no source</span>';
   const lov = attr.lov_matched ? '<span class="flag-ok">✓ LOV</span>' : '<span class="flag-bad">✗ LOV</span>';
   return `${grounded} ${lov}`;
 }
@@ -98,7 +106,7 @@ async function loadData() {
 function currentView() {
   const hash = location.hash.replace("#", "");
   if (hash.startsWith("product/")) return "detail";
-  return ["dashboard", "upload", "products", "review", "metrics"].includes(hash) ? hash : "dashboard";
+  return ["dashboard", "upload", "products", "rag", "review", "metrics"].includes(hash) ? hash : "dashboard";
 }
 
 function route() {
@@ -298,7 +306,7 @@ function renderAttrRow(p, a) {
       <div class="name">${esc(a.label)}</div>
       <div class="val">${esc(a.value ?? "")} ${uom}</div>
       <div class="status">${badge || attrStatus(a)}</div>
-      <div class="flag-ok">${a.source ? "🔎" : ""}</div>
+      <div class="flag-ok">${isWebSource(a.source) ? "🔎" : ""}</div>
     </div>`;
 }
 
@@ -306,22 +314,215 @@ function showEvidence(rowId, label) {
   const p = findProduct(rowId);
   if (!p) return;
   const a = (p.attributes || []).find((x) => x && x.label === label);
+  const chunks = (p.rag && p.rag.evidence) || [];
+  // Best match: same source URL (+page when given), else same URL only.
+  let chunk = null;
+  if (a && a.source) {
+    chunk =
+      chunks.find((c) => c.url === a.source && String(c.page) === String(a.source_page ?? "")) ||
+      chunks.find((c) => c.url === a.source) ||
+      null;
+  }
+  const terms = [a && a.value, a && a.raw_value].filter(Boolean);
+  const webSrc = isWebSource(a && a.source);
   const card = $("#modal-card");
   card.innerHTML = `
     <h4>Evidence — ${esc(label)}</h4>
     <p class="sub" style="color:var(--muted);margin-bottom:12px">Value: <strong>${esc(a ? a.value : "")}</strong> ${esc(a && a.uom ? a.uom : "")}</p>
     ${a && a.source ? `
       <div class="evidence">
-        <div><span class="src">Source:</span> ${esc(a.source)}</div>
-        ${a.source_page ? `<div>Page: ${esc(a.source_page)}</div>` : ""}
+        <div><span class="src">Source:</span> ${webSrc
+          ? `<a href="${esc(a.source)}" target="_blank" rel="noopener noreferrer" style="color:#93c5fd">${esc(a.source)}</a>`
+          : esc(a.source)}</div>
+        ${webSrc && a.source_page ? `<div>Page: ${esc(a.source_page)}</div>` : ""}
         ${a.raw_value ? `<div>Raw value: <span class="mono">${esc(a.raw_value)}</span></div>` : ""}
       </div>
+      ${chunk ? `
+        <div class="ev-item modal-ev">
+          <div class="ev-meta">
+            <span class="chip mono">${esc(docTypeLabel(chunk.document_type))}</span>
+            ${chunk.page != null ? `<span>chunk ${esc(chunk.page)}</span>` : ""}
+            <span class="ev-score">BM25 ${esc(String(chunk.score ?? "—"))}</span>
+          </div>
+          <div class="ev-text">${highlightTerms(chunk.snippet, terms)}</div>
+        </div>` : chunks.length ? `
+        <div class="rag-warn" style="margin-top:8px">This source page was not among the retrieved chunks — the value may come from description parsing rather than web evidence.</div>` : `
+        <div class="rag-warn" style="margin-top:8px">Source recorded, but no document text was retrieved for this row.</div>`}
       <p style="font-size:12px;color:var(--muted);margin-top:10px">
         Retrieved from manufacturer sources via RAG and normalized against the controlled vocabulary.
       </p>` : `
-      <div class="evidence">No manufacturer source attached to this attribute — flag for review.</div>`}
+      <div class="evidence">No manufacturer web source — this value was parsed from the part description (or is empty) and is routed through human review before it can be trusted.</div>`}
     <div style="margin-top:16px;text-align:right"><button class="btn" onclick="closeModal()">Close</button></div>`;
   $("#modal").hidden = false;
+}
+
+/* ── RAG Evidence viewer (V10 deep-dive) ─────────────────── */
+const DOC_TYPE_LABELS = {
+  product_page: "Product Page",
+  specification_sheet: "Spec Sheet",
+  installation_manual: "Manual",
+  catalogue: "Catalogue",
+  technical_doc: "Tech Doc",
+};
+
+function docTypeLabel(t) {
+  return DOC_TYPE_LABELS[t] || (t ? String(t).replace(/_/g, " ") : "Source");
+}
+
+function docStatusPill(status) {
+  if (status === "fetched") return '<span class="pill high">fetched</span>';
+  if (status === "pdf_skipped") return '<span class="pill medium">pdf skipped</span>';
+  return '<span class="pill low">failed</span>';
+}
+
+/* Escape-first highlighting: split() on a safe regex keeps matches at odd
+ * indices, so only escaped text ever becomes markup. */
+function highlightTerms(text, terms) {
+  const raw = String(text == null ? "" : text);
+  const clean = [...new Set(
+    (terms || [])
+      .map((t) => String(t).trim())
+      .filter((t) => t.length > 1)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  )];
+  if (!clean.length) return esc(raw);
+  try {
+    const re = new RegExp("(" + clean.join("|") + ")", "gi");
+    return raw
+      .split(re)
+      .map((part, i) => (i % 2 === 1 ? "<mark>" + esc(part) + "</mark>" : esc(part)))
+      .join("");
+  } catch (e) {
+    return esc(raw);
+  }
+}
+
+function ragTermsFor(p) {
+  const terms = [p.mfg_part_num, p.manufacturer_name, p.brand_name];
+  for (const q of (p.rag && p.rag.queries) || []) terms.push(...q.split(/\s+/));
+  return terms;
+}
+
+function ragStats(products) {
+  const s = { sources: 0, fetched: 0, fetchFails: 0, chunks: 0, evidence: 0,
+              queries: 0, groundedAttrs: 0, totalAttrs: 0 };
+  for (const p of products) {
+    const attrs = (p.attributes || []).filter((a) => a && a.label);
+    s.totalAttrs += attrs.length;
+    s.groundedAttrs += attrs.filter((a) => a.source).length;
+    const r = p.rag;
+    if (!r) continue;
+    s.queries += (r.queries || []).length;
+    s.sources += (r.sources || []).length;
+    for (const d of r.documents || []) d.status === "fetched" ? s.fetched++ : s.fetchFails++;
+    s.chunks += r.chunks_indexed || 0;
+    s.evidence += (r.evidence || []).length;
+  }
+  return s;
+}
+
+function shortUrl(u) {
+  return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
+function ragCard(p, maxScore) {
+  const r = p.rag || {};
+  const docs = r.documents || [];
+  const ev = r.evidence || [];
+  const key = encodeURIComponent(productKey(p));
+  const terms = ragTermsFor(p);
+  const fetchedCount = docs.filter((d) => d.status === "fetched").length;
+
+  return `
+  <details class="rag-card">
+    <summary>
+      <span class="mono rc-mpn">${esc(p.mfg_part_num || "—")}</span>
+      <span class="rc-brand">${esc(p.brand_name || "")}</span>
+      <span class="rc-counts">
+        <span>${(r.queries || []).length} queries</span>
+        <span>${(r.sources || []).length} sources</span>
+        <span class="${fetchedCount ? "ok-text" : ""}">${fetchedCount}/${docs.length} docs</span>
+        <span>${r.chunks_indexed || 0} chunks</span>
+        <span class="${ev.length ? "ok-text" : "warn-text"}">${ev.length} evidence</span>
+      </span>
+      <a class="btn small" href="#product/${key}" onclick="event.stopPropagation()">Product →</a>
+    </summary>
+    <div class="rag-body">
+      ${(r.queries || []).length ? `
+        <div class="rag-h">Retrieval queries</div>
+        <div class="chips">${r.queries.map((q) => `<span class="chip mono">${esc(q)}</span>`).join("")}</div>` : ""}
+      <div class="rag-h">Discovered manufacturer documents</div>
+      ${docs.length ? `
+        <table class="docs-table">
+          <thead><tr><th>Document</th><th>Type</th><th>Status</th><th class="num">Chars parsed</th></tr></thead>
+          <tbody>
+            ${docs.map((d) => `<tr>
+              <td class="mono"><a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(shortUrl(d.url))}</a></td>
+              <td>${docTypeLabel(d.document_type)}</td>
+              <td>${docStatusPill(d.status)}</td>
+              <td class="mono num">${d.chars != null ? d.chars.toLocaleString() : "—"}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>` : '<div class="empty-inline">No manufacturer sources were discovered for this row.</div>'}
+      <div class="rag-h">Retrieved evidence (BM25-ranked)</div>
+      ${ev.length ? ev.map((e) => `
+        <div class="ev-item">
+          <div class="ev-meta">
+            <span class="chip mono">${docTypeLabel(e.document_type)}</span>
+            <span>page/chunk ${esc(e.page ?? "?")}</span>
+            <span class="score-bar"><span style="width:${Math.round(((Number(e.score) || 0) / maxScore) * 100)}%"></span></span>
+            <span class="score-val mono">${esc(e.score ?? "—")}</span>
+          </div>
+          <p class="ev-text mono">${highlightTerms((e.snippet || "").slice(0, 320), terms)}${(e.snippet || "").length > 320 ? "…" : ""}</p>
+        </div>`).join("") : '<div class="empty-inline">No evidence retrieved — attribute extraction fell back to description-only parsing for this row.</div>'}
+    </div>
+  </details>`;
+}
+
+function renderRag() {
+  const products = activeProducts();
+  const traced = products.filter((p) => p.rag);
+  const s = ragStats(products);
+  const maxScore = Math.max(
+    1,
+    ...traced.flatMap((p) => ((p.rag && p.rag.evidence) || []).map((e) => Number(e.score) || 0))
+  );
+
+  $("#view").innerHTML = `
+    <div class="section">
+      <h2>RAG Evidence</h2>
+      <p class="sub">How every extracted attribute is grounded in real manufacturer documents —
+      expand a product to see its full retrieval trace.</p>
+
+      <div class="rag-flow">
+        ${[
+          ["Queries", "MPN + manufacturer + type"],
+          ["Discover", "official URLs only · marketplaces blocked"],
+          ["Fetch & parse", "HTML → clean text"],
+          ["Chunk", "500-word windows, 50 overlap"],
+          ["Retrieve", "BM25 top-k per query"],
+          ["Extract", "LLM cites URL + page"],
+        ].map(([t, d]) =>
+          `<div class="flow-step"><div class="fs-t">${t}</div><div class="fs-d">${d}</div></div>`
+        ).join('<div class="flow-arrow" aria-hidden="true">→</div>')}
+      </div>
+
+      <div class="grid" style="margin-top:14px">
+        <div class="stat"><div class="label">Retrieval Queries</div><div class="value">${s.queries}</div><div class="hint">generated across all products</div></div>
+        <div class="stat"><div class="label">Sources Discovered</div><div class="value">${s.sources}</div><div class="hint">official manufacturer URLs</div></div>
+        <div class="stat"><div class="label">Documents Fetched</div><div class="value ok">${s.fetched}</div><div class="hint">${s.fetchFails} failed or pdf-skipped</div></div>
+        <div class="stat"><div class="label">Chunks Indexed</div><div class="value">${s.chunks}</div><div class="hint">searchable text windows</div></div>
+        <div class="stat"><div class="label">Evidence Retrieved</div><div class="value ok">${s.evidence}</div><div class="hint">top BM25 matches passed to extraction</div></div>
+        <div class="stat"><div class="label">Grounded Attributes</div><div class="value ok">${s.groundedAttrs}/${s.totalAttrs}</div><div class="hint">attributes citing a source document</div></div>
+      </div>
+    </div>
+    ${traced.length ? traced.map((p) => ragCard(p, maxScore)).join("") : `
+    <div class="section">
+      <div class="empty">
+        No RAG traces in this snapshot.<br/>
+        Run the pipeline on a catalogue file from the <a href="#upload">Upload</a> page — every processed row records its full retrieval trace here.
+      </div>
+    </div>`}`;
 }
 
 /* ── Review (V11) ────────────────────────────────────────── */
@@ -574,7 +775,7 @@ function renderUpload() {
       <div class="howto">
         <h3>What happens on upload</h3>
         <ol>
-          <li>The file is parsed and validated (CSV or Excel).</li>
+          <li>The file is parsed and validated (CSV or Excel). Headers are auto-detected — common names like "Part Number", "Description", "Brand" or "Manufacturer" are mapped automatically.</li>
           <li>Every row runs the 11-stage pipeline: understanding &rarr; classification &rarr; entity resolution &rarr; source discovery &rarr; RAG extraction &rarr; normalization &rarr; content generation.</li>
           <li>Validation + confidence scoring flag anything a human should check.</li>
           <li>The dashboard, products, review queue and metrics views reload with the fresh output.</li>
@@ -595,6 +796,8 @@ async function refreshEnv() {
     grid.innerHTML =
       item(s.master_ready, "Manufacturer master") +
       item(s.llm_ready, "LLM enrichment (GROQ)") +
+      // Detects an older server build still running from before code changes.
+      item(s.flexible_headers === true, "Flexible header mapping") +
       `<div class="meta"><div class="k">Current snapshot</div><div class="v">${s.ready ? s.n_products + " products" : "empty"}</div></div>`;
   } catch (e) {
     grid.innerHTML = '<div class="meta"><div class="k">Backend</div><div class="v warn-text">API unreachable</div></div>';
@@ -648,11 +851,20 @@ async function processUpload() {
     }
 
     const m = data.metrics || {};
+    const cm = data.column_map;
+    const mapLine = cm && Object.keys(cm.mapped || {}).length
+      ? `<div class="map-line">Headers matched: ${
+          Object.entries(cm.mapped).map(([c, o]) => `${esc(o)} &rarr; <strong>${esc(c)}</strong>`).join(" &middot; ")
+        }${cm.missing && cm.missing.length
+          ? ` &middot; <span class="warn-text">no match for ${cm.missing.map(esc).join(", ")} (treated as empty)</span>`
+          : ""}</div>`
+      : "";
     status.innerHTML =
       `<strong>Done:</strong> ${data.n_rows} products enriched in ${data.elapsed_s}s` +
       ` · high confidence ${m.high_confidence ?? 0} · needs review ${m.needs_review ?? 0}` +
       ` · avg confidence ${m.avg_confidence != null ? pct(m.avg_confidence) : "n/a"}` +
-      (data.total_in_file > data.n_rows ? ` (${data.total_in_file - data.n_rows} skipped by row limit)` : "");
+      (data.total_in_file > data.n_rows ? ` (${data.total_in_file - data.n_rows} skipped by row limit)` : "") +
+      mapLine;
 
     await loadData();
     updateBadge();
@@ -671,6 +883,7 @@ async function processUpload() {
 function render(view) {
   if (view === "upload") return renderUpload();
   if (view === "products") return renderProducts();
+  if (view === "rag") return renderRag();
   if (view === "review") return renderReview();
   if (view === "metrics") return renderMetrics();
   return renderDashboard();

@@ -33,13 +33,15 @@ def _run_rows(
     """Run the orchestrator over every row. Returns (delivery_rows, internal_products).
 
     max_workers stays small by default: each row already fans out several
-    Groq LLM calls, and the token-per-minute cap throttles big bursts into
-    429 storms. Override with PIPELINE_WORKERS if the key allows more.
+    Groq LLM calls and the global pacer (LLM_MIN_INTERVAL) serializes their
+    starts against the token-per-minute cap. 3 workers overlap the parallel
+    web-fetch phase of one row with the LLM phases of others; override with
+    PIPELINE_WORKERS if your key allows more.
     """
     import concurrent.futures
 
     total = len(input_df)
-    max_workers = int(os.getenv("PIPELINE_WORKERS", "2"))
+    max_workers = int(os.getenv("PIPELINE_WORKERS", "3"))
 
     def _process_single(args):
         idx, row = args
