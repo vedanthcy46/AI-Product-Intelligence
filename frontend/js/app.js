@@ -30,7 +30,13 @@ function backendBase() {
   return CONFIGURED_BACKEND;
 }
 
-const api = (path) => backendBase() + path;
+/* Join base + path safely: relative paths ("data/x.json") must gain a "/"
+ * against a remote base, but stay untouched when same-origin (base = ""). */
+function api(path) {
+  const base = backendBase();
+  if (!base) return path;
+  return base + (path.startsWith("/") ? "" : "/") + path;
+}
 
 const state = {
   products: [],
