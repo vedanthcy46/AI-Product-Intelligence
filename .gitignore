@@ -46,8 +46,16 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-# ── Data / reference CSVs (large input files, not source code) ───────────────
-data/
+# ── Data: ignore everything EXCEPT small reference files needed by cloud deploys
+# (uploads / enriched outputs / snapshots stay local-only) ────────────────────
+data/**
+!data/reference/
+!data/reference/UniCat_Manufacturer_and_Brand_List.xlsx
+# Add the official delivery-format CSV here when obtained from challenge docs;
+# mapper falls back to a 253-col schema without it.
+!data/reference/Unihack_ Expected Output - Delivery Format.csv
+!data/raw/
+!data/raw/Unihack_ Sample Dataset - Input.csv
 
 # ── Generated frontend data snapshots (pipeline output, regenerable) ─────────
 frontend/data/
