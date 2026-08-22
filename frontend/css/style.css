@@ -413,6 +413,7 @@ table tr.row-rejected td { opacity: 0.55; text-decoration: line-through; }
 
 .docs-table td a { color: var(--accent); word-break: break-all; }
 .docs-table .num { text-align: right; }
+.doc-err { color: var(--bad); font-size: 11px; margin-top: 2px; word-break: break-all; }
 
 .ev-item {
   background: var(--bg-soft);

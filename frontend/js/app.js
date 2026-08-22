@@ -481,7 +481,7 @@ function ragCard(p, maxScore) {
           <thead><tr><th>Document</th><th>Type</th><th>Status</th><th class="num">Chars parsed</th></tr></thead>
           <tbody>
             ${docs.map((d) => `<tr>
-              <td class="mono"><a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(shortUrl(d.url))}</a></td>
+              <td class="mono"><a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(shortUrl(d.url))}</a>${d.error ? `<div class="doc-err">${esc(d.error)}</div>` : ""}</td>
               <td>${docTypeLabel(d.document_type)}</td>
               <td>${docStatusPill(d.status)}</td>
               <td class="mono num">${d.chars != null ? d.chars.toLocaleString() : "—"}</td>

@@ -130,7 +130,7 @@ class RAGPipeline:
             try:
                 # Basic PDF detection by extension - gracefully skip parsing raw PDFs for now unless needed
                 if url.lower().endswith(".pdf"):
-                    logger.info(f"Skipping PDF parsing for {url} (add PyMuPDF if PDF support is needed).")
+                    logger.debug("Skipping PDF parsing for %s (add PyMuPDF if PDF support is needed).", url)
                     return None, {"url": url, "document_type": src.document_type,
                                   "status": "pdf_skipped", "chars": None}
 
@@ -157,11 +157,15 @@ class RAGPipeline:
                     return doc, {"url": url, "document_type": src.document_type,
                                  "status": "fetched", "chars": len(text)}
                 return None, {"url": url, "document_type": src.document_type,
-                              "status": "failed", "chars": len(text or "")}
+                              "status": "failed", "chars": len(text or ""),
+                              "error": f"no usable text ({len(text or '')} chars)"}
             except Exception as e:
-                logger.warning(f"Failed to fetch {url}: {e}")
+                # Full detail goes to debug; the per-run summary below keeps
+                # production logs readable.
+                logger.debug("Fetch failed for %s: %s", url, e)
                 return None, {"url": url, "document_type": src.document_type,
-                              "status": "failed", "chars": None}
+                              "status": "failed", "chars": None,
+                              "error": f"{type(e).__name__}: {e}"[:160]}
 
         docs: List[Document] = []
         statuses: List[dict] = []
@@ -178,6 +182,19 @@ class RAGPipeline:
             statuses.append(status)
             if doc is not None:
                 docs.append(doc)
+
+        # One-line per-run summary instead of a WARNING wall per dead URL.
+        fetched_n = sum(1 for s in statuses if s["status"] == "fetched")
+        skipped_n = sum(1 for s in statuses if s["status"] == "pdf_skipped")
+        failed = [s for s in statuses if s["status"] == "failed"]
+        if failed or skipped_n:
+            logger.info(
+                "RAG fetch: %d/%d sources fetched (%d pdf-skipped, %d unreachable) — "
+                "rows degrade to description-based attributes",
+                fetched_n, len(statuses), skipped_n, len(failed),
+            )
+            for s in failed:
+                logger.debug("  unreachable: %s (%s)", s["url"], s.get("error", "?"))
 
         if statuses_out is not None:
             statuses_out.extend(statuses)

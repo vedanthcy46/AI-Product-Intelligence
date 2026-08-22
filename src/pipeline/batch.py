@@ -5,22 +5,28 @@ import pandas as pd
 from typing import Optional, Tuple, List, Dict, Any
 
 from src.pipeline.orchestrator import PipelineOrchestrator
-from src.output.mapper import EXPECTED_OUTPUT_CSV, product_to_row
+from src.output.mapper import get_expected_headers, product_to_row
 
 logger = logging.getLogger(__name__)
 
 
 def _reorder_columns(output_df: pd.DataFrame) -> pd.DataFrame:
-    """Re-order columns strictly according to the reference delivery format."""
+    """
+    Re-order columns strictly according to the reference delivery format.
+
+    Header resolution is delegated to get_expected_headers(), which caches the
+    result and emits exactly ONE actionable warning when the official
+    reference CSV is absent — this function used to duplicate that warning on
+    every batch run.
+    """
     try:
-        reference_df = pd.read_csv(EXPECTED_OUTPUT_CSV, nrows=0, encoding="utf-8")
-        expected_columns = reference_df.columns.tolist()
+        expected_columns = get_expected_headers()
         for col in expected_columns:
             if col not in output_df.columns:
                 output_df[col] = ""
         return output_df[expected_columns]
     except Exception as e:
-        logger.warning("Could not strictly reorder columns based on reference: %s", e)
+        logger.warning("Could not strictly reorder columns: %s", e)
         return output_df
 
 
