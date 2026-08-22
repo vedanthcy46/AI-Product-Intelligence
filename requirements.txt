@@ -1,0 +1,9 @@
+pydantic
+pandas
+openpyxl
+groq
+requests
+beautifulsoup4
+python-dotenv
+flask
+waitress

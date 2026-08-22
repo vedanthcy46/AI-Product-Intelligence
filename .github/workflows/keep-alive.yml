@@ -1,0 +1,38 @@
+# Keep-alive: pings the deployed dashboard's health endpoint every 5 minutes
+# so the Render free instance never reaches its ~15-minute idle spin-down.
+#
+# One-time setup (repo Settings → Secrets and variables → Actions):
+#   Variables tab → New repository variable:
+#     Name: APP_URL
+#     Value: https://your-app.onrender.com        (no trailing slash)
+#
+# Notes:
+#   - Without APP_URL this workflow exits successfully and does nothing, so
+#     forks and CI runs stay green.
+#   - GitHub may delay scheduled jobs by a few minutes under load — harmless
+#     here because Render only spins down after ~15 idle minutes.
+#   - GitHub auto-disables cron workflows after 60 days without repo commit;
+#     re-enable in the Actions tab if that happens mid-review-period.
+
+name: Keep-alive ping
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch: {}      # manual "Run workflow" button for testing
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    if: ${{ vars.APP_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/health
+        run: |
+          url="${{ vars.APP_URL }}/api/health"
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$url")
+          echo "$(date -u +%FT%TZ) GET $url -> HTTP $code"
+          test "$code" = "200"
