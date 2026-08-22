@@ -65,6 +65,8 @@ function pct(v, digits = 1) {
   return (v * 100).toFixed(digits) + "%";
 }
 
+const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+
 function confidencePill(product) {
   const c = product.confidence;
   if (!c) return '<span class="pill medium">n/a</span>';
@@ -114,10 +116,22 @@ function attrStatus(attr) {
 
 /* ── Data loading ────────────────────────────────────────── */
 async function loadData() {
-  const [pRes, mRes] = await Promise.all([fetch(api(DATA_URL)), fetch(api(METRICS_URL))]);
-  if (!pRes.ok) throw new Error("products.json missing");
+  // Products snapshot is REQUIRED; metrics are optional — a blip on either
+  // must not take the whole dashboard down (Promise.all used to do exactly
+  // that). Cache-busting keeps proxies/browsers from replaying stale copies.
+  const bust = `t=${Date.now()}`;
+  const pRes = await fetch(`${api(DATA_URL)}?${bust}`);
+  if (!pRes.ok) {
+    throw new Error(`product snapshot unavailable (HTTP ${pRes.status} from ${backendBase() || "this origin"})`);
+  }
   state.products = await pRes.json();
-  state.metrics = mRes.ok ? await mRes.json() : null;
+  try {
+    const mRes = await fetch(`${api(METRICS_URL)}?${bust}`);
+    state.metrics = mRes.ok ? await mRes.json() : null;
+  } catch (e) {
+    console.warn("metrics.json unreachable — continuing without it:", e.message);
+    state.metrics = null;
+  }
   // Seed server-persisted reviews (written by POST /api/review) into local
   // state — local decisions always win over the server snapshot.
   for (const p of state.products) {
@@ -904,19 +918,20 @@ async function processUpload() {
         ` · avg confidence ${m.avg_confidence != null ? pct(m.avg_confidence) : "n/a"}` +
         mapLine;
 
-      // Refresh the dashboard from the fresh snapshot. Retry a few times —
-      // right after a run the file can take a moment to become reachable
-      // through proxies/caches. Never fail silently again.
+      // Refresh the dashboard from the fresh snapshot. Retry with growing
+      // backoff (~20s window) — free-tier instances can be mid-wake or a
+      // proxy hiccup can eat the first attempts. Manual retry afterwards.
       let loaded = false;
       let lastErr = null;
-      for (let attempt = 1; attempt <= 4 && !loaded; attempt++) {
+      const delays = [1500, 3000, 6000, 10000];
+      for (let attempt = 0; attempt < delays.length && !loaded; attempt++) {
         try {
           await loadData();
           loaded = true;
         } catch (e) {
           lastErr = e;
-          console.warn(`Snapshot load failed (attempt ${attempt}/4):`, e.message);
-          if (attempt < 4) await new Promise((res) => setTimeout(res, 1500));
+          console.warn(`Snapshot load failed (attempt ${attempt + 1}/${delays.length}):`, e.message);
+          if (attempt < delays.length - 1) await wait(delays[attempt]);
         }
       }
       if (loaded) {
@@ -927,7 +942,8 @@ async function processUpload() {
       } else {
         status.innerHTML +=
           `<div class="warn-text" style="margin-top:8px">Processing finished, but refreshing the views failed: ${esc(lastErr ? lastErr.message : "unknown")}.` +
-          ` The data IS saved — open <a href="#products">Products</a> or reload the page.</div>`;
+          ` The data IS saved — <button class="btn small" onclick="manualLoadRetry(this)">Try loading now</button>` +
+          ` or reload the page. If this keeps happening on the hosted frontend, check that the backend (${esc(backendBase() || "local")}) is awake.</div>`;
       }
       return;
     }
@@ -942,6 +958,23 @@ async function processUpload() {
     const fill = $("#progress-fill");
     if (fill && total) fill.style.width = Math.min(100, (p.done / total) * 100) + "%";
   }, 2000);
+}
+
+/* Manual recovery button shown when the post-run refresh kept failing. */
+async function manualLoadRetry(btn) {
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+  try {
+    await loadData();
+    updateBadge();
+    toast(`Loaded ${state.products.length} product(s)`);
+    location.hash = "#dashboard";
+    route();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "Try again";
+    toast("Still failing: " + e.message);
+  }
 }
 
 /* ── Rendering dispatch ──────────────────────────────────── */
@@ -969,14 +1002,24 @@ function closeModal() {
 (async function boot() {
   $("#view").innerHTML = '<div class="loading">Loading data…</div>';
   window.addEventListener("hashchange", route);
-  try {
-    await loadData();
-    updateBadge();
+  // A cold free-tier backend can take ~1 minute to answer the very first
+  // request — retry briefly before giving up and sending them to Upload
+  // (where the status cards show exactly what's reachable).
+  let ok = false;
+  for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+    try {
+      await loadData();
+      ok = true;
+    } catch (e) {
+      console.warn(`Boot load failed (attempt ${attempt + 1}/3):`, e.message);
+      if (attempt < 2) await wait(2500);
+    }
+  }
+  updateBadge();
+  if (ok) {
     route();
-  } catch (e) {
-    // No snapshot yet — the Upload view is the way in.
+  } else {
     location.hash = "#upload";
-    updateBadge();
     route();
   }
 })();
