@@ -93,6 +93,13 @@ def no_cache(response):
     # The frontend is a single-file no-build app under active change; cached
     # app.js/index.html (without the Upload view) made the page look broken.
     response.headers["Cache-Control"] = "no-store, must-revalidate"
+    # CORS: the same dashboard can be hosted separately (GitHub Pages,
+    # file://) and point at this API via window.UNIHACK_BACKEND_URL.
+    # No cookies/credentials are involved, so a permissive policy is safe
+    # and lets preflights (JSON POST /api/review) succeed.
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
 
