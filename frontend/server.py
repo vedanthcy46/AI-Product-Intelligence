@@ -267,6 +267,18 @@ def api_process():
     )
 
 
+@app.get("/api/health")
+def api_health():
+    """
+    Ultra-light liveness probe for uptime pingers and Render's health check.
+
+    Deliberately does NOT touch products.json or any disk state — pingers hit
+    this every few minutes and must stay cheap enough to keep a free-tier
+    instance awake without doing real work.
+    """
+    return jsonify(ok=True, ts=round(time.time(), 3))
+
+
 @app.get("/api/status")
 def api_status():
     has_data = os.path.exists(os.path.join(DATA_DIR, "products.json"))
