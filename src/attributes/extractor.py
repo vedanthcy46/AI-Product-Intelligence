@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 
 from src.preprocessing.models import ProductInput
 from src.rag.document import Chunk
+from src.llm_config import call_with_retry, completion_kwargs, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +83,15 @@ class AttributeExtractor:
 
         try:
             client = groq.Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model="llama-3.1-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=800,
-                temperature=0,
+            response = call_with_retry(
+                lambda: client.chat.completions.create(
+                    model=get_chat_model(),
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                    **completion_kwargs(get_chat_model(), 800),
+                ),
+                what="attribute extraction",
             )
             raw = response.choices[0].message.content.strip()
             

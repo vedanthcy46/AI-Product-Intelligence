@@ -27,6 +27,7 @@ from typing import Optional
 
 from src.preprocessing.understanding_model import ProductUnderstanding
 from src.classification.taxonomy import TAXONOMY, VALID_CLASSPATHS
+from src.llm_config import call_with_retry, completion_kwargs, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -214,11 +215,14 @@ class ProductClassifier:
 
         try:
             client = groq.Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model="llama3-8b-8192",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=60,
-                temperature=0,
+            response = call_with_retry(
+                lambda: client.chat.completions.create(
+                    model=get_chat_model(),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    **completion_kwargs(get_chat_model(), 60),
+                ),
+                what="classification",
             )
             answer = response.choices[0].message.content.strip()
         except Exception as e:

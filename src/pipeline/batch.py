@@ -28,11 +28,18 @@ def _run_rows(
     orchestrator: PipelineOrchestrator,
     input_df: pd.DataFrame,
     collect_internal: bool = False,
+    progress_cb=None,
 ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    """Run the orchestrator over every row. Returns (delivery_rows, internal_products)."""
+    """Run the orchestrator over every row. Returns (delivery_rows, internal_products).
+
+    max_workers stays small by default: each row already fans out several
+    Groq LLM calls, and the token-per-minute cap throttles big bursts into
+    429 storms. Override with PIPELINE_WORKERS if the key allows more.
+    """
     import concurrent.futures
 
     total = len(input_df)
+    max_workers = int(os.getenv("PIPELINE_WORKERS", "2"))
 
     def _process_single(args):
         idx, row = args
@@ -47,32 +54,43 @@ def _run_rows(
 
     delivery: List[Dict[str, Any]] = []
     internal: List[Dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         for mapped, intern in executor.map(_process_single, input_df.iterrows()):
             delivery.append(mapped)
             if collect_internal and intern is not None:
                 internal.append(intern)
+            done += 1
+            if progress_cb is not None:
+                try:
+                    progress_cb(done, total)
+                except Exception:
+                    pass
 
     return delivery, (internal if collect_internal else None)
 
 
 def process_batch(
     input_df: pd.DataFrame,
-    master_path: str,
-    output_path: str,
+    master_path: Optional[str] = None,
+    output_path: str = "",
     limit: Optional[int] = None,
     internal_json_path: Optional[str] = None,
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Processes a batch of raw product rows using the PipelineOrchestrator,
     and writes the fully formed 252-column dataset to output_path.
 
     :param input_df: DataFrame containing raw input rows.
-    :param master_path: Path to the manufacturer master Excel file.
+    :param master_path: Optional path to the manufacturer master Excel file.
+                        When missing/None the resolvers degrade to pass-through
+                        mode (low confidence, flagged for review).
     :param output_path: Where to save the output CSV.
     :param limit: Optional max number of rows to process (useful for testing).
     :param internal_json_path: Optional path to also write the rich internal
                                Product models (V1 — frontend data contract).
+    :param progress_cb: Optional callable(done, total) fired after each row.
     """
     orchestrator = PipelineOrchestrator(master_path=master_path)
 
@@ -80,7 +98,8 @@ def process_batch(
         input_df = input_df.head(limit)
 
     delivery_rows, internal_products = _run_rows(
-        orchestrator, input_df, collect_internal=internal_json_path is not None
+        orchestrator, input_df, collect_internal=internal_json_path is not None,
+        progress_cb=progress_cb,
     )
 
     output_df = pd.DataFrame(delivery_rows)

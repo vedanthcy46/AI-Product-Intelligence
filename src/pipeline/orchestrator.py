@@ -35,7 +35,7 @@ class PipelineOrchestrator:
     into the exact 252-column delivery format.
     """
 
-    def __init__(self, master_path: str):
+    def __init__(self, master_path: Optional[str] = None):
         self.manufacturer_resolver = ManufacturerResolver(master_path)
         try:
             self.brand_resolver = BrandResolver(master_path)

@@ -37,6 +37,10 @@ body {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  box-shadow: 0 2px 10px rgba(2, 6, 23, 0.45);
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-mark {
@@ -265,8 +269,58 @@ input[type="search"], select {
 
 /* ── Review action strip ─────────────────────────────────── */
 .action-strip { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+/* ── Edit modal ──────────────────────────────────────────── */
+.edit-h { font-size: 13px; font-weight: 600; margin: 14px 0 8px; color: var(--ink); }
+.edit-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.edit-row.col { flex-direction: column; align-items: stretch; }
+.edit-label { font-size: 12.5px; color: var(--muted); min-width: 150px; flex: 0 0 150px; }
+.edit-row.col .edit-label { flex: none; min-width: 0; margin-bottom: 2px; }
+.edit-row input[type="text"], .edit-row textarea {
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.edit-row textarea { resize: vertical; }
+
+/* ── Verdict flow-through ───────────────────────────────── */
+table tr.row-rejected td { opacity: 0.55; text-decoration: line-through; }
+.banner-ok, .banner-bad, .banner-warn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  margin: 12px 0 0;
+}
+.banner-ok { background: var(--ok-soft); color: var(--ok); border: 1px solid rgba(22, 163, 74, 0.3); }
+.banner-bad { background: var(--bad-soft); color: var(--bad); border: 1px solid rgba(220, 38, 38, 0.3); }
+.banner-warn { background: var(--warn-soft); color: var(--warn); border: 1px solid rgba(217, 119, 6, 0.3); }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.toggle input { width: auto; }
 .review-note { font-size: 13px; color: var(--muted); margin-top: 10px; }
 .review-note .user { color: var(--accent); font-weight: 600; }
+
+/* ── Upload ─────────────────────────────────────────────── */
+.upload-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 18px;
+  border: 2px dashed rgba(148, 163, 184, 0.45);
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.04);
+}
+.upload-box input[type="file"] { flex: 1; min-width: 240px; font-size: 14px; }
+.upload-box .opt { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); }
+.ok-text { color: #059669 !important; font-weight: 600; }
+.warn-text { color: #b45309 !important; font-weight: 600; }
+
+.howto { margin-top: 22px; font-size: 14px; color: var(--muted); }
+.howto h3 { margin: 0 0 8px; font-size: 15px; color: var(--ink); }
+.howto ol { margin: 0; padding-left: 20px; line-height: 1.75; }
 
 /* ── Toast ──────────────────────────────────────────────── */
 .toast {
@@ -289,4 +343,21 @@ input[type="search"], select {
 @media (max-width: 720px) {
   .attr-row .name { width: 120px; }
   .view { padding: 16px; }
+}
+
+/* Upload progress bar (live "row X/N" polling) */
+.progress {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: rgba(37, 99, 235, 0.15);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  width: 2%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.6s ease;
 }

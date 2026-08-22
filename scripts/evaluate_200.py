@@ -19,16 +19,21 @@ GT_XLSX = os.path.join(DATA, "Unilog-Sample_200_Items-Input-vs-Output.xlsx")
 MASTER = os.path.join(DATA, "UniCat_Manufacturer_and_Brand_List.xlsx")
 
 
-def _require(path, label):
+def _require(path, label, fatal=True):
     if not os.path.exists(path):
-        sys.exit(f"[evaluate_200] Missing required file {label}: {path}\n"
-                 f"Data files are supplied locally (gitignored). Add them under data/.")
+        if fatal:
+            sys.exit(f"[evaluate_200] Missing required file {label}: {path}\n"
+                     f"Data files are supplied locally (gitignored). Add them under data/.")
+        print(f"[evaluate_200] Warning: {label} not found at {path} — "
+              f"running in pass-through mode (manufacturer/brand unmatched, low confidence).")
+        return False
+    return True
 
 
 def main():
     _require(INPUT_CSV, "200/1000-row input")
     _require(GT_XLSX, "ground-truth evaluation set")
-    _require(MASTER, "manufacturer/brand master")
+    _require(MASTER, "manufacturer/brand master", fatal=False)
 
     import pandas as pd
     from src.pipeline.batch import process_batch

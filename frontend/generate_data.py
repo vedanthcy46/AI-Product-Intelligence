@@ -38,10 +38,11 @@ def _load_internal_products(limit: int):
         print(f"Using existing internal products JSON: {INTERNAL_JSON} ({len(products)} rows)")
         return products[:limit] if limit else products
 
-    for path, label in [(INPUT_CSV, "input"), (MASTER, "master")]:
-        if not os.path.exists(path):
-            sys.exit(f"[generate_data] Missing {label}: {path}. Supply the data/ files or run "
-                     f"`python run_pipeline.py --internal-json data/processed/products.json` first.")
+    if not os.path.exists(INPUT_CSV):
+        sys.exit(f"[generate_data] Missing input: {INPUT_CSV}. Supply the data/ files or run "
+                 f"`python run_pipeline.py --internal-json data/processed/products.json` first.")
+    if not os.path.exists(MASTER):
+        print(f"[generate_data] Warning: master not found at {MASTER} — running in pass-through mode.")
 
     print("No internal JSON found — running the pipeline to generate it...")
     import pandas as pd
@@ -50,7 +51,7 @@ def _load_internal_products(limit: int):
     raw = pd.read_csv(INPUT_CSV, encoding="utf-8")
     process_batch(
         input_df=raw,
-        master_path=MASTER,
+        master_path=MASTER if os.path.exists(MASTER) else None,
         output_path=os.path.join(ROOT, "data", "processed", "delivery_output.csv"),
         limit=limit,
         internal_json_path=INTERNAL_JSON,

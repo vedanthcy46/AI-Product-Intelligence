@@ -15,6 +15,7 @@ from typing import Optional
 import pandas as pd
 
 from src.entity_resolution._utils import normalize, similarity, coerce_code
+from src.llm_config import call_with_retry, completion_kwargs, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,22 @@ class ManufacturerResolver:
         """
         Load the manufacturer/brand master list.
         Expects columns: Manufacturer_Name, Manufacturer_Code (at minimum).
+
+        If the master file is missing/unreadable the resolver degrades
+        gracefully: every raw value passes through as-is with low confidence,
+        flagged for review (so downstream stages still run).
         """
+        self._empty = True
+        self._exact_map: dict[str, int] = {}
+        self._norm_map: dict[str, int] = {}
+        self._names: list[str] = []
+        self._codes: list[Optional[str]] = []
+        self._norm_names: list[str] = []
+
+        if not master_path or not os.path.exists(master_path):
+            logger.warning("Manufacturer master not found (%s); pass-through mode (low confidence).", master_path)
+            return
+
         df = pd.read_excel(master_path, dtype=str).fillna("")
         df.columns = [c.strip() for c in df.columns]
 
@@ -66,8 +82,7 @@ class ManufacturerResolver:
         norm_names: list[str] = [normalize(n) for n in names]
 
         # O(1) lookup dicts — first occurrence wins on normalized collision
-        self._exact_map: dict[str, int] = {n: i for i, n in enumerate(names)}
-        self._norm_map: dict[str, int] = {}
+        self._exact_map = {n: i for i, n in enumerate(names)}
         for i, n in enumerate(norm_names):
             if n not in self._norm_map:
                 self._norm_map[n] = i
@@ -75,6 +90,7 @@ class ManufacturerResolver:
         self._names = names
         self._codes = codes
         self._norm_names = norm_names
+        self._empty = False
 
     @staticmethod
     def _find_col(columns: list[str], keywords: list[str], default) -> Optional[str]:
@@ -94,6 +110,8 @@ class ManufacturerResolver:
             return ManufacturerMatch(None, None, 0.0, "unresolved", True)
 
         raw = raw.strip()
+        if self._empty:
+            return ManufacturerMatch(raw, None, 0.35, "pass-through", True)
         return (
             self._exact(raw)
             or self._normalized(raw)
@@ -185,11 +203,14 @@ class ManufacturerResolver:
 
         try:
             client = groq.Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model="llama3-8b-8192",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=60,
-                temperature=0,
+            response = call_with_retry(
+                lambda: client.chat.completions.create(
+                    model=get_chat_model(),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    **completion_kwargs(get_chat_model(), 60),
+                ),
+                what="manufacturer resolution",
             )
             answer = response.choices[0].message.content.strip()
         except Exception as e:

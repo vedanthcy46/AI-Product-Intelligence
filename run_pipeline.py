@@ -59,8 +59,9 @@ def main() -> int:
         logger.error("Input file not found: %s", input_path)
         return 1
     if not os.path.exists(master_path):
-        logger.error("Master file not found: %s", master_path)
-        return 1
+        logger.warning("Master file not found at %s — running in pass-through mode "
+                       "(manufacturer/brand unmatched, low confidence).", master_path)
+        master_path = None
 
     import pandas as pd
     from src.pipeline.batch import process_batch

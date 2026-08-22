@@ -18,14 +18,19 @@ INPUT_CSV = os.path.join(ROOT, "data", "raw", "Unihack_ Sample Dataset - Input.c
 MASTER = os.path.join(ROOT, "data", "reference", "UniCat_Manufacturer_and_Brand_List.xlsx")
 
 
-def _require(path, label):
+def _require(path, label, fatal=True):
     if not os.path.exists(path):
-        sys.exit(f"[evaluate_1000] Missing required file {label}: {path}")
+        if fatal:
+            sys.exit(f"[evaluate_1000] Missing required file {label}: {path}")
+        print(f"[evaluate_1000] Warning: {label} not found at {path} — running in pass-through mode "
+              f"(manufacturer/brand unmatched, low confidence).")
+        return False
+    return True
 
 
 def main():
     _require(INPUT_CSV, "1000-row input")
-    _require(MASTER, "manufacturer/brand master")
+    _require(MASTER, "manufacturer/brand master", fatal=False)
 
     import pandas as pd
     from src.pipeline.batch import process_batch
