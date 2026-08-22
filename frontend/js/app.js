@@ -903,12 +903,32 @@ async function processUpload() {
         ` · high confidence ${m.high_confidence ?? 0} · needs review ${m.needs_review ?? 0}` +
         ` · avg confidence ${m.avg_confidence != null ? pct(m.avg_confidence) : "n/a"}` +
         mapLine;
-      try {
-        await loadData();
+
+      // Refresh the dashboard from the fresh snapshot. Retry a few times —
+      // right after a run the file can take a moment to become reachable
+      // through proxies/caches. Never fail silently again.
+      let loaded = false;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 4 && !loaded; attempt++) {
+        try {
+          await loadData();
+          loaded = true;
+        } catch (e) {
+          lastErr = e;
+          console.warn(`Snapshot load failed (attempt ${attempt}/4):`, e.message);
+          if (attempt < 4) await new Promise((res) => setTimeout(res, 1500));
+        }
+      }
+      if (loaded) {
         updateBadge();
+        toast(`Loaded ${state.products.length} product(s)`);
         location.hash = "#dashboard";
         route();
-      } catch (e) { /* snapshot not readable yet — stay on this view */ }
+      } else {
+        status.innerHTML +=
+          `<div class="warn-text" style="margin-top:8px">Processing finished, but refreshing the views failed: ${esc(lastErr ? lastErr.message : "unknown")}.` +
+          ` The data IS saved — open <a href="#products">Products</a> or reload the page.</div>`;
+      }
       return;
     }
 
