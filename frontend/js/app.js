@@ -846,62 +846,82 @@ async function processUpload() {
 
   btn.disabled = true;
   fileInput.disabled = true;
-  status.innerHTML =
-    'Processing row 0 — the AI pipeline is running. This can take a moment…' +
-    '<div class="progress"><span id="progress-fill"></span></div>';
 
-  // Live progress: poll the job state while the (long) upload request runs.
-  const poll = setInterval(async () => {
-    try {
-      const p = await (await fetch(api("/api/progress"))).json();
-      if (!p.running) return;
-      const label = p.total
-        ? `Processing row ${p.done}/${p.total} — ${p.elapsed_s}s elapsed.`
-        : `Processing — ${p.elapsed_s}s elapsed.`;
-      status.innerHTML =
-        `${label} Each row makes several LLM + web calls; Groq rate limits pace the run.` +
-        '<div class="progress"><span id="progress-fill"></span></div>';
-      const fill = $("#progress-fill");
-      if (fill && p.total) fill.style.width = Math.min(100, (p.done / p.total) * 100) + "%";
-    } catch (e) { /* server busy with the pipeline — skip this tick */ }
-  }, 2000);
+  let poll = null;
+  const finishUi = () => { clearInterval(poll); btn.disabled = false; fileInput.disabled = false; };
 
+  // Kick off processing. The backend ACCEPTS the upload and returns
+  // immediately; the pipeline runs in a background thread (long synchronous
+  // responses were killed by hosting proxies mid-flight -> "Failed to fetch").
   try {
     const res = await fetch(api("/api/process"), { method: "POST", body: fd });
-    const data = await res.json();
-
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       status.textContent = data.error || "Processing failed.";
+      finishUi();
+      return;
+    }
+  } catch (e) {
+    status.innerHTML =
+      "Could not reach the backend. On a free tier the service may be asleep — " +
+      "the first request can take ~1 minute to wake it. Wait a moment and retry." +
+      `<br/><span class="warn-text">${esc(e.message)}</span>`;
+    finishUi();
+    return;
+  }
+
+  status.innerHTML =
+    'Upload accepted — the AI pipeline is running in the background…' +
+    '<div class="progress"><span id="progress-fill"></span></div>';
+
+  // Drive everything from /api/progress: live rows, then done | error.
+  poll = setInterval(async () => {
+    let p;
+    try {
+      p = await (await fetch(api("/api/progress"))).json();
+    } catch (e) { return; /* transient network blip — next tick retries */ }
+
+    if (p.status === "error") {
+      finishUi();
+      status.innerHTML = `<span class="warn-text">Processing failed:</span> ${esc(p.error || "unknown error")}`;
+      return;
+    }
+    if (p.status === "done") {
+      finishUi();
+      const r = p.result || {};
+      const m = r.metrics || {};
+      const cm = r.column_map;
+      const mapLine = cm && Object.keys(cm.mapped || {}).length
+        ? `<div class="map-line">Headers matched: ${
+            Object.entries(cm.mapped).map(([c, o]) => `${esc(o)} &rarr; <strong>${esc(c)}</strong>`).join(" &middot; ")
+          }${cm.missing && cm.missing.length
+            ? ` &middot; <span class="warn-text">no match for ${cm.missing.map(esc).join(", ")} (treated as empty)</span>`
+            : ""}</div>`
+        : "";
+      status.innerHTML =
+        `<strong>Done:</strong> ${r.n_rows} products enriched in ${r.elapsed_s}s` +
+        ` · high confidence ${m.high_confidence ?? 0} · needs review ${m.needs_review ?? 0}` +
+        ` · avg confidence ${m.avg_confidence != null ? pct(m.avg_confidence) : "n/a"}` +
+        mapLine;
+      try {
+        await loadData();
+        updateBadge();
+        location.hash = "#dashboard";
+        route();
+      } catch (e) { /* snapshot not readable yet — stay on this view */ }
       return;
     }
 
-    const m = data.metrics || {};
-    const cm = data.column_map;
-    const mapLine = cm && Object.keys(cm.mapped || {}).length
-      ? `<div class="map-line">Headers matched: ${
-          Object.entries(cm.mapped).map(([c, o]) => `${esc(o)} &rarr; <strong>${esc(c)}</strong>`).join(" &middot; ")
-        }${cm.missing && cm.missing.length
-          ? ` &middot; <span class="warn-text">no match for ${cm.missing.map(esc).join(", ")} (treated as empty)</span>`
-          : ""}</div>`
-      : "";
+    const total = p.total || 0;
+    const label = total
+      ? `Processing row ${p.done}/${total} — ${p.elapsed_s}s elapsed.`
+      : `Processing — ${p.elapsed_s}s elapsed.`;
     status.innerHTML =
-      `<strong>Done:</strong> ${data.n_rows} products enriched in ${data.elapsed_s}s` +
-      ` · high confidence ${m.high_confidence ?? 0} · needs review ${m.needs_review ?? 0}` +
-      ` · avg confidence ${m.avg_confidence != null ? pct(m.avg_confidence) : "n/a"}` +
-      (data.total_in_file > data.n_rows ? ` (${data.total_in_file - data.n_rows} skipped by row limit)` : "") +
-      mapLine;
-
-    await loadData();
-    updateBadge();
-    location.hash = "#dashboard";
-    route();
-  } catch (e) {
-    status.textContent = "Upload failed: " + e.message;
-  } finally {
-    clearInterval(poll);
-    btn.disabled = false;
-    fileInput.disabled = false;
-  }
+      `${label} Each row makes several LLM + web calls; Groq rate limits pace the run.` +
+      '<div class="progress"><span id="progress-fill"></span></div>';
+    const fill = $("#progress-fill");
+    if (fill && total) fill.style.width = Math.min(100, (p.done / total) * 100) + "%";
+  }, 2000);
 }
 
 /* ── Rendering dispatch ──────────────────────────────────── */

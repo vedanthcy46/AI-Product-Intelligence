@@ -71,7 +71,9 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # Live job state so the UI can show "row X/N" instead of a frozen spinner.
-JOB = {"running": False, "done": 0, "total": 0, "started_at": None}
+# status: idle | running | done | error — the async upload contract.
+JOB = {"running": False, "done": 0, "total": 0, "started_at": None,
+       "status": "idle", "error": None, "result": None}
 _JOB_LOCK = threading.Lock()
 
 
@@ -250,28 +252,38 @@ def api_process():
         os.remove(save_path)
         return jsonify(error="The uploaded file has no rows."), 400
 
-    _job_update(running=True, done=0, total=limit or len(df), started_at=time.time())
-    try:
-        n_rows, elapsed, metrics, csv_path, col_report = _run_pipeline(save_path, limit)
-    except ValueError as e:
-        # Unrecognizable header schema — a 4xx, not a server fault.
-        app.logger.warning("Rejected upload '%s': %s", upload.filename, e)
-        return jsonify(error=str(e)), 400
-    except Exception as e:
-        app.logger.exception("Pipeline failed")
-        return jsonify(error=f"Pipeline failed: {e}"), 500
-    finally:
-        _job_update(running=False)
-
-    return jsonify(
-        ok=True,
-        n_rows=n_rows,
-        total_in_file=len(df),
-        elapsed_s=round(elapsed, 1),
-        metrics=metrics,
-        enriched_csv=os.path.relpath(csv_path, ROOT),
-        column_map=col_report,
+    # Asynchronous processing: the HTTP response returns IMMEDIATELY and the
+    # pipeline runs in a background thread. Long synchronous runs (minutes for
+    # 20+ rows) were being killed by the hosting proxy mid-flight, which the
+    # browser surfaced as "Failed to fetch". The frontend polls /api/progress
+    # (already wired) until JOB["status"] flips to done|error.
+    _job_update(
+        running=True, status="running", error=None, result=None,
+        done=0, total=limit or len(df), started_at=time.time(),
     )
+
+    def _worker():
+        try:
+            n_rows, elapsed, metrics, csv_path, col_report = _run_pipeline(save_path, limit)
+            _job_update(status="done", result={
+                "n_rows": n_rows,
+                "elapsed_s": round(elapsed, 1),
+                "metrics": metrics,
+                "column_map": col_report,
+            })
+        except ValueError as e:
+            # Unrecognizable header schema — a user-input problem.
+            app.logger.warning("Rejected upload '%s': %s", upload.filename, e)
+            _job_update(status="error", error=str(e))
+        except Exception as e:
+            app.logger.exception("Pipeline failed")
+            _job_update(status="error", error=f"Pipeline failed: {e}")
+        finally:
+            _job_update(running=False)
+
+    threading.Thread(target=_worker, name="pipeline-job", daemon=True).start()
+
+    return jsonify(ok=True, started=True, total=int(JOB["total"]))
 
 
 @app.get("/api/health")
