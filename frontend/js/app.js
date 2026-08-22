@@ -73,6 +73,25 @@ function pct(v, digits = 1) {
 
 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 
+/* Fallback counters used when metrics.json is absent — computed from the
+ * loaded products instead of crashing the dashboard view. */
+function countHigh() {
+  return state.products.filter((p) => p.confidence && p.confidence.status === "HIGH").length;
+}
+
+function avgGrounding() {
+  let claims = 0;
+  let grounded = 0;
+  for (const p of state.products) {
+    for (const a of p.attributes || []) {
+      if (!a || a.value == null) continue;
+      claims++;
+      if (a.source) grounded++;
+    }
+  }
+  return claims ? grounded / claims : 0;
+}
+
 function confidencePill(product) {
   const c = product.confidence;
   if (!c) return '<span class="pill medium">n/a</span>';
@@ -130,7 +149,18 @@ async function loadData() {
   if (!pRes.ok) {
     throw new Error(`product snapshot unavailable (HTTP ${pRes.status} from ${backendBase() || "this origin"})`);
   }
-  state.products = await pRes.json();
+  let products;
+  try {
+    products = await pRes.json();
+  } catch (e) {
+    // A fresh instance has no snapshot: /data/products.json falls through to
+    // the SPA fallback and returns index.html with HTTP 200 — i.e. HTML, not
+    // JSON. Treat it as "nothing processed yet", not as a crash.
+    const err = new Error("no snapshot on this backend yet — run an upload first");
+    err.fatal = true;
+    throw err;
+  }
+  state.products = products;
   try {
     const mRes = await fetch(`${api(METRICS_URL)}?${bust}`);
     state.metrics = mRes.ok ? await mRes.json() : null;
@@ -1018,6 +1048,7 @@ function closeModal() {
       ok = true;
     } catch (e) {
       console.warn(`Boot load failed (attempt ${attempt + 1}/3):`, e.message);
+      if (e.fatal) break;          // genuinely no snapshot — retrying won't help
       if (attempt < 2) await wait(2500);
     }
   }
