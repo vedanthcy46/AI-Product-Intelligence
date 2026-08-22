@@ -1,0 +1,49 @@
+# Netlify hosting for the UniHack dashboard — STATIC FRONTEND ONLY.
+#
+# The Flask API keeps running on Render; this page detects it is NOT running
+# on the backend's own origin and sends every call to
+# window.UNIHACK_BACKEND_URL (frontend/index.html), which answers with CORS
+# headers (frontend/server.py).
+#
+# Deploy options:
+#   Git-connected : push this repo -> "New site from Git" -> settings below
+#                   are picked up automatically from this file.
+#   Drag & drop   : https://app.netlify.com/drop -> drop the frontend/ folder.
+#                   (netlify.toml is only read for Git deploys; the defaults
+#                   are fine either way.)
+
+# Stage ONLY the browser assets into dist/ — keeps server.py, generate*.py,
+# __pycache__ and any local data/ snapshot out of the public site.
+[build]
+  command = "mkdir -p dist && cp frontend/index.html dist/ && cp -r frontend/js frontend/css dist/"
+  publish = "dist"
+
+# Routing is hash-based (#/products, #/rag ...) so the server only ever needs
+# to serve index.html and assets. Existing files always beat this fallback,
+# so it only catches stray deep links.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The UI iterates fast during the hackathon — reviewers should never get a
+# cached yesterday-app.js from their browser.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+[[headers]]
+  for = "/js/*"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+[[headers]]
+  for = "/css/*"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"

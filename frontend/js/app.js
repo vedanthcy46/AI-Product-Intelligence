@@ -8,6 +8,30 @@ const DATA_URL = "data/products.json";
 const METRICS_URL = "data/metrics.json";
 const REVIEW_KEY = "unihack.reviews";
 
+/* ── Backend connection ──────────────────────────────────── */
+/* Environment-aware routing:
+ *   - DEVELOPMENT  (page opened from the local Flask server: localhost /
+ *     127.0.0.1)            -> ALWAYS the local server, relative paths
+ *   - PRODUCTION   (page hosted anywhere else: Render itself, GitHub Pages,
+ *     file:// preview)      -> window.UNIHACK_BACKEND_URL from index.html
+ * The deployed backend must allow CORS (it does — see server.py). */
+const CONFIGURED_BACKEND = String(window.UNIHACK_BACKEND_URL || "").replace(/\/+$/, "");
+const DEV_HOSTNAMES = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+
+function backendBase() {
+  const host = String(location.hostname || "").toLowerCase();
+  if (!host || location.protocol === "file:") return CONFIGURED_BACKEND;
+  if (DEV_HOSTNAMES.has(host)) return "";                 // dev -> local API
+  try {
+    if (CONFIGURED_BACKEND && new URL(CONFIGURED_BACKEND).origin === location.origin) {
+      return "";                                          // prod ON the backend itself
+    }
+  } catch (e) { /* malformed config -> fall through */ }
+  return CONFIGURED_BACKEND;
+}
+
+const api = (path) => backendBase() + path;
+
 const state = {
   products: [],
   metrics: null,
@@ -90,7 +114,7 @@ function attrStatus(attr) {
 
 /* ── Data loading ────────────────────────────────────────── */
 async function loadData() {
-  const [pRes, mRes] = await Promise.all([fetch(DATA_URL), fetch(METRICS_URL)]);
+  const [pRes, mRes] = await Promise.all([fetch(api(DATA_URL)), fetch(api(METRICS_URL))]);
   if (!pRes.ok) throw new Error("products.json missing");
   state.products = await pRes.json();
   state.metrics = mRes.ok ? await mRes.json() : null;
@@ -599,7 +623,7 @@ async function syncReview(key, decision, edited) {
   try {
     const body = { key, decision, at: new Date().toISOString() };
     if (edited) body.product = edited;
-    const res = await fetch("/api/review", {
+    const res = await fetch(api("/api/review"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -789,7 +813,7 @@ async function refreshEnv() {
   const grid = $("#env-grid");
   if (!grid) return;
   try {
-    const r = await fetch("/api/status");
+    const r = await fetch(api("/api/status"));
     const s = await r.json();
     const item = (ok, label) =>
       `<div class="meta"><div class="k">${label}</div><div class="v ${ok ? "ok-text" : "warn-text"}">${ok ? "Ready" : "Not available"}</div></div>`;
@@ -798,6 +822,7 @@ async function refreshEnv() {
       item(s.llm_ready, "LLM enrichment (GROQ)") +
       // Detects an older server build still running from before code changes.
       item(s.flexible_headers === true, "Flexible header mapping") +
+      `<div class="meta"><div class="k">Backend</div><div class="v mono" style="font-size:12px">${esc(backendBase() || location.origin || "same origin")}</div></div>` +
       `<div class="meta"><div class="k">Current snapshot</div><div class="v">${s.ready ? s.n_products + " products" : "empty"}</div></div>`;
   } catch (e) {
     grid.innerHTML = '<div class="meta"><div class="k">Backend</div><div class="v warn-text">API unreachable</div></div>';
@@ -828,7 +853,7 @@ async function processUpload() {
   // Live progress: poll the job state while the (long) upload request runs.
   const poll = setInterval(async () => {
     try {
-      const p = await (await fetch("/api/progress")).json();
+      const p = await (await fetch(api("/api/progress"))).json();
       if (!p.running) return;
       const label = p.total
         ? `Processing row ${p.done}/${p.total} — ${p.elapsed_s}s elapsed.`
@@ -842,7 +867,7 @@ async function processUpload() {
   }, 2000);
 
   try {
-    const res = await fetch("/api/process", { method: "POST", body: fd });
+    const res = await fetch(api("/api/process"), { method: "POST", body: fd });
     const data = await res.json();
 
     if (!res.ok) {
