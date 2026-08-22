@@ -28,7 +28,7 @@ def main():
     if args.generate or not os.path.exists(os.path.join(ROOT, "data", "products.json")):
         cmd = [sys.executable, "generate_data.py"]
         if args.limit:
-            cmd.append(f"--limit {args.limit}")
+            cmd.extend(["--limit", str(args.limit)])
         subprocess.run(cmd, cwd=ROOT, check=True)
 
     handler = http.server.SimpleHTTPRequestHandler

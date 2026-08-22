@@ -186,7 +186,7 @@ class ManufacturerResolver:
         try:
             client = groq.Groq(api_key=api_key)
             response = client.chat.completions.create(
-                model="llama3-8b-8192",
+                model="qwen/qwen3.6-27b",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=60,
                 temperature=0,

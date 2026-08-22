@@ -146,7 +146,7 @@ _KNOWN_FIELDS = {
 
 class ProductUnderstandingExtractor:
 
-    def __init__(self, model: str = "llama3-8b-8192"):
+    def __init__(self, model: str = "qwen/qwen3.6-27b"):
         self._model = model
 
     def extract(self, product: ProductInput) -> ProductUnderstanding:
