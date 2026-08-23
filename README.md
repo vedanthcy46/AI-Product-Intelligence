@@ -1,4 +1,9 @@
+<<<<<<< Updated upstream
 # UniHack — Equal 3-Person Implementation Plan
+=======
+<<<<<<< HEAD
+# AI Product Intelligence Pipeline
+>>>>>>> Stashed changes
 
 ## AI Product Content Enrichment Pipeline
 
@@ -44,6 +49,7 @@ Confidence + Human Review
 252-Column Delivery Output
 ```
 
+<<<<<<< Updated upstream
 The project should be developed first against the **200-item Input-vs-Output dataset**, which provides the labelled reference for evaluation, and then tested at scale on the **1,000-item working dataset**.
 
 ---
@@ -393,6 +399,506 @@ Example:
 
 ---
 
+=======
+## 🛠️ Tech Stack
+
+- **Data Ingestion & Extraction**: Python, PyMuPDF (`fitz`), pandas
+- **AI & Validation**: Claude/OpenAI (via Instructor), Pydantic
+- **Backend**: FastAPI, SQLite
+- **Frontend**: Next.js 14, React, Tailwind CSS
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ & npm
+- Valid LLM API Keys (Anthropic / OpenAI)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/your-org/AI-Product-Intelligence.git
+   cd AI-Product-Intelligence
+   ```
+
+2. **Backend Setup**
+   ```bash
+   # Create a virtual environment
+   python -m venv venv
+   
+   # Activate the virtual environment
+   # Windows:
+   venv\Scripts\activate
+   # macOS/Linux:
+   source venv/bin/activate
+=======
+# UniHack — Equal 3-Person Implementation Plan
+
+## AI Product Content Enrichment Pipeline
+
+### Team
+
+- **Tanush** — Product Intelligence, Entity Resolution, Classification & RAG
+- **Yashas** — Data Intelligence, Normalization, Validation & Evaluation
+- **Vedanth** — Content Generation, Frontend, Review & Product Experience
+
+---
+
+# 1. Project Objective
+
+The system transforms messy industrial catalogue data into standardized, searchable and commerce-ready product records.
+
+The overall pipeline is:
+
+```text
+Raw Catalogue
+     ↓
+Preprocessing
+     ↓
+Manufacturer / Brand Resolution
+     ↓
+Product Understanding
+     ↓
+Classification
+     ↓
+Manufacturer Source Discovery
+     ↓
+RAG
+     ↓
+Attribute Extraction
+     ↓
+LOV / UOM / Fraction Normalization
+     ↓
+Content Generation
+     ↓
+Validation
+     ↓
+Confidence + Human Review
+     ↓
+252-Column Delivery Output
+```
+
+The project should be developed first against the **200-item Input-vs-Output dataset**, which provides the labelled reference for evaluation, and then tested at scale on the **1,000-item working dataset**.
+>>>>>>> 2e41f85344118efc41693cd126162b241166d04c
+
+   # Install dependencies
+   pip install -r requirements.txt
+   ```
+
+<<<<<<< HEAD
+3. **Environment Configuration**
+   ```bash
+   # Copy the example environment variables file
+   cp .env.example .env
+   ```
+   *Edit `.env` and add your API keys.*
+
+4. **Frontend Setup** (If applicable)
+   ```bash
+   cd frontend
+   npm install
+   cd ..
+   ```
+
+## 🚦 Usage
+
+### 1. Run the API Backend
+
+From the root directory, start the FastAPI server:
+
+```bash
+# Example command, depending on your entry point
+uvicorn api.main:app --reload
+```
+
+### 2. Run the Review UI (Frontend)
+
+In a new terminal window, navigate to the frontend directory and start the Next.js server:
+
+```bash
+cd frontend
+npm run dev
+```
+
+### 3. Run the Pipeline CLI
+=======
+# 2. Important Principle
+
+Do not treat the 252-column Delivery Format as the internal data model.
+
+Use an internal structured representation:
+
+```text
+Product
+├── Identity
+├── Manufacturer
+├── Brand
+├── Classification
+├── Attributes
+├── Descriptions
+├── Sources
+├── Confidence
+├── Validation
+└── Review Status
+```
+
+Then map that internal representation into the exact expected 252-column output.
+
+---
+
+# 3. Workload Philosophy
+
+The work is divided into **three vertical ownership areas**, but everyone participates in integration and testing.
+
+Ownership means:
+
+> The owner is responsible for making the component work, but the other two members can contribute and review it.
+
+This avoids one person becoming "the AI person", another becoming "the data person", and another becoming "only frontend".
+
+---
+
+# 4. TANUSH — Product Intelligence, Entity Resolution, Classification & RAG
+
+## Main Goal
+
+> **Understand what the product is and retrieve reliable manufacturer evidence for it.**
+
+Tanush owns the AI-heavy upstream intelligence layer.
+
+---
+
+## T1 — Input Intelligence
+
+### Tasks
+
+- Understand the six raw input fields:
+  - `Mfg_Part_Num`
+  - `Part_Desc`
+  - `E1_Brand`
+  - `Unilog_Brand`
+  - `DIB_Brand`
+  - `Part_Manuf`
+- Work with the cleaned `ProductInput` object.
+- Identify useful semantic information in abbreviated descriptions.
+- Preserve row IDs for traceability.
+
+### Output
+
+```python
+ProductInput(
+    mfg_part_num=...,
+    part_desc=...,
+    e1_brand=...,
+    unilog_brand=...,
+    dib_brand=...,
+    part_manuf=...
+)
+```
+
+---
+
+# T2 — Manufacturer Resolution
+
+### Reference
+
+`UniCat_Manufacturer_and_Brand_List.xlsx`
+
+### Pipeline
+
+```text
+Raw Manufacturer
+      ↓
+String Cleaning
+      ↓
+Exact Match
+      ↓
+Normalized Match
+      ↓
+Fuzzy Match
+      ↓
+Candidate Ranking
+      ↓
+LLM Disambiguation if necessary
+      ↓
+Canonical Manufacturer
+```
+
+### Output
+
+```json
+{
+  "manufacturer_name": "Canonical Manufacturer",
+  "manufacturer_code": "...",
+  "confidence": 0.97,
+  "method": "fuzzy_match"
+}
+```
+
+### Requirements
+
+- Never invent manufacturer names.
+- Prefer exact/normalized matches.
+- Use fuzzy matching for messy strings.
+- Use LLM only when deterministic matching is ambiguous.
+- Flag low-confidence matches for review.
+
+---
+
+# T3 — Brand Resolution
+
+Use the same manufacturer/brand master.
+
+Pipeline:
+
+```text
+Raw Brand
+   ↓
+Clean
+   ↓
+Exact / Fuzzy Match
+   ↓
+Canonical Brand
+   ↓
+Brand Code
+```
+
+Handle placeholders such as:
+
+```text
+-- Unbranded --
+-- No Unilog Brand --
+-- No DIB Brand --
+```
+
+as empty values.
+
+---
+
+# T4 — Product Understanding
+
+## Goal
+
+Understand cryptic descriptions.
+
+Example:
+
+```text
+3/8 CPLG BRS 150#
+```
+
+should become an intermediate representation such as:
+
+```text
+Product Type: Coupling
+Size: 3/8
+Material: Brass
+Pressure: 150
+```
+
+These are **candidate facts**, not yet final normalized values.
+
+### Why this layer exists
+
+The representation will be consumed by:
+
+- classification
+- RAG query generation
+- attribute extraction
+- content generation
+
+---
+
+# T5 — Classification
+
+Determine:
+
+```text
+Dept
+Class
+Fine
+Classpath
+```
+
+### Pipeline
+
+```text
+Product Understanding
+       ↓
+Candidate Classes
+       ↓
+Controlled Vocabulary
+       ↓
+Semantic Matching
+       ↓
+LLM Ranking
+       ↓
+Final Classpath
+       ↓
+Confidence
+```
+
+### Important
+
+The LLM must not invent arbitrary taxonomy values.
+
+The final result must map to the supplied taxonomy/reference data.
+
+---
+
+# T6 — Manufacturer Source Discovery
+
+## Goal
+
+Find authoritative manufacturer information.
+
+Preferred sources:
+
+```text
+1. Manufacturer official website
+2. Manufacturer product page
+3. Manufacturer specification sheet
+4. Manufacturer installation manual
+5. Manufacturer catalogue
+6. Manufacturer technical documentation
+```
+
+Avoid marketplace/distributor sources when the challenge's sourcing rules exclude them.
+
+---
+
+## Query Generation
+
+For each product, create several retrieval queries:
+
+```text
+<MPN> specifications
+<MPN> dimensions
+<MPN> installation manual
+<MPN> technical data
+<MPN> <product type>
+```
+
+---
+
+# T7 — RAG Pipeline
+
+## Main RAG Architecture
+
+```text
+Product
+   ↓
+Query Generation
+   ↓
+Manufacturer Source Discovery
+   ↓
+Document Download
+   ↓
+Parsing
+   ↓
+Cleaning
+   ↓
+Chunking
+   ↓
+Embeddings
+   ↓
+Vector Store
+   ↓
+Top-K Retrieval
+   ↓
+Reranking
+   ↓
+Relevant Evidence
+```
+
+---
+
+## Source Metadata
+
+Every retrieved chunk should retain:
+
+```json
+{
+  "source_url": "...",
+  "manufacturer": "...",
+  "mpn": "...",
+  "document_type": "specification_sheet",
+  "page": 3
+}
+```
+
+This allows the final system to answer:
+
+> Where did this product attribute come from?
+>>>>>>> 2e41f85344118efc41693cd126162b241166d04c
+
+You can process sample files directly from the terminal:
+
+<<<<<<< HEAD
+```bash
+python -m pipeline data/samples/
+=======
+# T8 — RAG-Grounded Attribute Support
+
+RAG should not directly decide the final output.
+
+Instead:
+
+```text
+RAG
+ ↓
+Evidence
+ ↓
+LLM Extraction
+ ↓
+Candidate Attribute
+ ↓
+Yashas' Normalization
+ ↓
+Validation
+```
+
+Example:
+
+```json
+{
+  "label": "Voltage Rating",
+  "candidate_value": "120",
+  "candidate_uom": "V",
+  "source": "manufacturer_spec.pdf",
+  "page": 3
+}
+>>>>>>> 2e41f85344118efc41693cd126162b241166d04c
+```
+
+## 📂 Project Structure
+
+<<<<<<< HEAD
+```
+.
+├── src/                # Core extraction, pipeline, and AI logic
+├── frontend/           # Next.js Review UI
+├── data/               # Input files, samples, and extracted outputs
+├── tests/              # Unit and integration tests
+├── .env.example        # Example environment variables
+├── requirements.txt    # Python dependencies
+└── schema.py           # Unified Pydantic models (Product Schema)
+```
+
+## 👥 Core Team (UniHack)
+
+- **Vedanth**: Multi-modal ingestion & PDF Extraction (Vision AI)
+- **Yashas**: Pipeline orchestration, Excel parsing, Validation & Data Storage
+- **Tanush**: Full-stack integration, FastAPI backend, Next.js Review UI
+
+---
+<div align="center">
+  <i>Built with focus on data integrity, traceability, and actionable product intelligence.</i>
+</div>
+=======
+>>>>>>> Stashed changes
 # T9 — Pipeline Orchestration
 
 Tanush owns the high-level orchestration:
@@ -1773,3 +2279,7 @@ Content + Product Experience
         ↓
 UNILOG-READY PRODUCT
 ```
+<<<<<<< Updated upstream
+=======
+>>>>>>> 2e41f85344118efc41693cd126162b241166d04c
+>>>>>>> Stashed changes
