@@ -6,17 +6,17 @@
 
 ---
 
-## 📖 Overview
+##  Overview
 
 The **AI Product Intelligence Pipeline** is an end-to-end data processing and intelligence system that takes raw, unstructured product catalog data and enriches it into a verified 252-column commerce-ready delivery format. 
 
 This project tackles the challenge of messy industrial product descriptions by passing them through a three-stage intelligent pipeline:
 
-1. **🧠 Product Intelligence:** Entity resolution, classification, and Retrieval-Augmented Generation (RAG) to discover and pull data from manufacturer sources.
-2. **🛡️ Data Normalization & Validation:** Deterministic validation against strict rule-based engines (UOM standards, fractional limits, Lists of Values), ensuring high confidence scoring.
-3. **✨ Content Generation & Presentation:** Translating verified facts into commerce-ready, human-readable descriptions, showcased in an intuitive Next.js Review UI.
+1. ** Product Intelligence:** Entity resolution, classification, and Retrieval-Augmented Generation (RAG) to discover and pull data from manufacturer sources.
+2. ** Data Normalization & Validation:** Deterministic validation against strict rule-based engines (UOM standards, fractional limits, Lists of Values), ensuring high confidence scoring.
+3. ** Content Generation & Presentation:** Translating verified facts into commerce-ready, human-readable descriptions, showcased in an intuitive Next.js Review UI.
 
-## 🏗️ Architecture
+## Architecture
 
 The pipeline follows a robust, multi-layered architecture:
 
@@ -34,7 +34,7 @@ graph TD
     J --> K[252-Column Delivery Output]
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Core & Data Processing:** Python 3.10+, pandas
 - **Document Processing (RAG):** PyMuPDF (`fitz`)
@@ -42,7 +42,7 @@ graph TD
 - **API Backend:** FastAPI, SQLite, Uvicorn
 - **Frontend / Review UI:** Next.js 14, React, Tailwind CSS
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -90,7 +90,7 @@ cd ..
 
 ---
 
-## 🚦 Usage Guide
+##  Usage Guide
 
 The system can be used via its CLI pipeline for bulk processing, or interactively via the API and Frontend.
 
@@ -137,7 +137,7 @@ Navigate to `http://localhost:3000` in your browser.
 
 ---
 
-## 🤝 Project Structure & Team Workflow
+##  Project Structure & Team Workflow
 
 The repository is structured to support our vertical ownership model while maintaining strict integration points:
 
