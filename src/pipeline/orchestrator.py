@@ -6,7 +6,7 @@ from src.entity_resolution.manufacturer import ManufacturerResolver
 from src.entity_resolution.brand import BrandResolver
 from src.preprocessing.understanding import ProductUnderstandingExtractor
 from src.classification.classifier import ProductClassifier
-from src.source_discovery.discovery import ManufacturerSourceDiscovery
+from src.source_discovery.discovery import ManufacturerSourceDiscovery, generate_queries
 from src.rag.pipeline import RAGPipeline
 from src.attributes.extractor import AttributeExtractor
 from src.attributes.mapper import normalize_candidate_attribute
@@ -35,7 +35,7 @@ class PipelineOrchestrator:
     into the exact 252-column delivery format.
     """
 
-    def __init__(self, master_path: str):
+    def __init__(self, master_path: Optional[str] = None):
         self.manufacturer_resolver = ManufacturerResolver(master_path)
         try:
             self.brand_resolver = BrandResolver(master_path)
@@ -95,17 +95,41 @@ class PipelineOrchestrator:
 
         # 5. Manufacturer Source Discovery
         sources = self.source_discovery.discover(product_input, classification)
-        internal_product["sources"] = sources
+        internal_product["sources"] = [s.to_dict() for s in sources]
 
-        # 6. RAG Pipeline
-        queries = [
-            f"{internal_product.get('manufacturer_name') or ''} {product_input.mfg_part_num or ''} specifications",
+        # 6. RAG Pipeline (traced so the frontend can show full provenance)
+        queries = generate_queries(product_input, classification)[:4] or [
+            f"{product_input.mfg_part_num or ''} specifications",
             f"{product_input.mfg_part_num or ''} dimensions",
         ]
-        evidence_chunks = self.rag_pipeline.run(sources, queries, top_k=3)
+        scored_chunks, rag_trace = self.rag_pipeline.run_traced(sources, queries, top_k=3)
+        evidence_chunks = [chunk for chunk, _score in scored_chunks]
+
+        rag_trace["sources"] = internal_product["sources"]
+        rag_trace["evidence"] = [
+            {
+                "url": chunk.source_url,
+                "document_type": chunk.document_type,
+                "page": chunk.page,
+                "score": score,
+                "snippet": (chunk.text or "")[:400],
+            }
+            for chunk, score in scored_chunks
+        ]
+        internal_product["rag"] = rag_trace
 
         # 7. Attribute Extraction
         candidate_attributes = self.attribute_extractor.extract(product_input, evidence_chunks)
+        if not candidate_attributes:
+            # No usable web evidence (dead URLs / PDF-only / LLM down):
+            # fall back to description-derived candidates so rows aren't
+            # empty. These carry source=None + low confidence and are all
+            # flagged needs_review by the normalizer.
+            logger.info("No grounded attributes for %s — using description fallback",
+                        product_input.mfg_part_num or "row")
+            candidate_attributes = self.attribute_extractor.extract_from_description(
+                product_input, understanding
+            )
 
         # 8. Normalization
         normalized_attributes = []

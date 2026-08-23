@@ -59,14 +59,26 @@ def main() -> int:
         logger.error("Input file not found: %s", input_path)
         return 1
     if not os.path.exists(master_path):
-        logger.error("Master file not found: %s", master_path)
-        return 1
+        logger.warning("Master file not found at %s — running in pass-through mode "
+                       "(manufacturer/brand unmatched, low confidence).", master_path)
+        master_path = None
 
     import pandas as pd
     from src.pipeline.batch import process_batch
+    from src.preprocessing.columns import normalize_columns
 
     logger.info("Loading input: %s", input_path)
     input_df = pd.read_csv(input_path, encoding="utf-8")
+
+    # Accept real-world headers ("Part Number", "Description", ...) by mapping
+    # them onto the canonical six-field schema before processing.
+    input_df, col_report = normalize_columns(input_df)
+    if col_report["mapped"]:
+        logger.info("Column mapping: %s",
+                    ", ".join(f"{o} -> {c}" for c, o in col_report["mapped"].items()))
+    if col_report["missing"]:
+        logger.warning("No matching column found for: %s (treated as empty)",
+                       ", ".join(col_report["missing"]))
 
     logger.info("Processing %d rows (limit=%s, workers=%d)...",
                 len(input_df), args.limit, args.workers)

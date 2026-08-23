@@ -1,5 +1,7 @@
+import concurrent.futures
 import logging
-from typing import List, Optional
+import os
+from typing import List, Optional, Tuple
 
 from src.rag.document import Document, Chunk
 from src.rag.retriever import SimpleRetriever
@@ -30,81 +32,172 @@ class RAGPipeline:
         Main entry point for the RAG pipeline.
         Fetches documents for the given sources, chunks them, and retrieves top-k chunks for queries.
         """
-        if not sources or not queries:
-            return []
+        scored, _trace = self.run_traced(sources, queries, top_k=top_k)
+        return [chunk for chunk, _score in scored]
 
-        documents = self._fetch_documents(sources)
+    def run_traced(
+        self,
+        sources: List[SourceResult],
+        queries: List[str],
+        top_k: int = 5,
+    ) -> Tuple[List[Tuple[Chunk, float]], dict]:
+        """
+        Same as run(), but also returns a trace of what happened at every stage:
+
+            {
+              "queries": [...],
+              "documents": [{url, document_type, status, chars}, ...],
+              "chunks_indexed": N,
+              "retrievals": [{query, hits: [{page, score}, ...]}, ...],
+            }
+
+        The trace powers the RAG Evidence view in the frontend — every chunk
+        handed to attribute extraction can be shown with its source URL, page
+        and BM25 score.
+        """
+        trace: dict = {
+            "queries": list(queries or []),
+            "documents": [],
+            "chunks_indexed": 0,
+            "retrievals": [],
+        }
+        if not sources or not queries:
+            return [], trace
+
+        documents = self._fetch_documents_traced(sources, trace["documents"])
         if not documents:
-            return []
+            return [], trace
 
         chunks = self._chunk_documents(documents)
+        trace["chunks_indexed"] = len(chunks)
         if not chunks:
-            return []
+            return [], trace
 
         retriever = SimpleRetriever(chunks)
-        
-        # We can either score chunks against all queries, or use a combined query.
-        # Here we just combine the queries into a larger search text for the retriever,
-        # or score individually and take the union of top-K. We will score individually.
-        relevant_chunks = []
+
+        relevant: List[Chunk] = []
+        best_score: dict = {}
         seen = set()
-        
+
         for query in queries:
             results = retriever.search(query, top_k=top_k)
+            hits = []
             for chunk, score in results:
                 # Use a simple tuple of (url, page, text) to deduplicate chunks
                 sig = (chunk.source_url, chunk.page, chunk.text)
+                hits.append({"url": chunk.source_url, "page": chunk.page, "score": round(score, 2)})
+                if score > best_score.get(sig, 0.0):
+                    best_score[sig] = score
                 if sig not in seen:
                     seen.add(sig)
-                    relevant_chunks.append(chunk)
+                    relevant.append(chunk)
+            trace["retrievals"].append({"query": query, "hits": hits})
 
-        # Sort by relevance? For now, order of queries gives rough priority.
-        # We limit to `top_k * len(queries)` total chunks.
-        return relevant_chunks
+        scored = [(chunk, round(best_score[(chunk.source_url, chunk.page, chunk.text)], 2))
+                  for chunk in relevant]
+        # Sort by relevance score descending so the strongest evidence comes first.
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored, trace
 
     def _fetch_documents(self, sources: List[SourceResult]) -> List[Document]:
+        docs, _statuses = self._fetch_documents_traced(sources)
+        return docs
+
+    def _fetch_documents_traced(
+        self, sources: List[SourceResult], statuses_out: Optional[List[dict]] = None
+    ) -> List[Document]:
         """
         Downloads and extracts text from URLs using requests and BeautifulSoup.
+
+        Sources are fetched CONCURRENTLY — hallucinated/unreachable URLs used
+        to burn their full timeout one after another (5 URLs x 5s = ~25s per
+        row); in parallel the row now waits at most one timeout (~3s).
+
+        When statuses_out is provided, records one status entry per attempted
+        source (in input order): fetched | failed | pdf_skipped.
         """
         import requests
         from bs4 import BeautifulSoup
 
-        docs = []
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        
-        for src in sources:
+        timeout = float(os.getenv("RAG_FETCH_TIMEOUT", "3"))
+        max_workers = max(1, int(os.getenv("RAG_FETCH_WORKERS", "4")))
+
+        def _attempt(src: SourceResult) -> Tuple[Optional[Document], dict]:
             url = src.url
             try:
                 # Basic PDF detection by extension - gracefully skip parsing raw PDFs for now unless needed
                 if url.lower().endswith(".pdf"):
-                    logger.info(f"Skipping PDF parsing for {url} (add PyMuPDF if PDF support is needed).")
-                    continue
-                    
-                response = requests.get(url, headers=headers, timeout=5)
+                    logger.debug("Skipping PDF parsing for %s (add PyMuPDF if PDF support is needed).", url)
+                    return None, {"url": url, "document_type": src.document_type,
+                                  "status": "pdf_skipped", "chars": None}
+
+                response = requests.get(url, headers=headers, timeout=timeout)
                 response.raise_for_status()
-                
+
                 soup = BeautifulSoup(response.text, "html.parser")
-                
+
                 # Strip out script and style elements
                 for script in soup(["script", "style", "nav", "footer", "header"]):
                     script.extract()
-                    
+
                 text = soup.get_text(separator=" ", strip=True)
-                
+
                 # Only keep docs that actually have text
                 if text and len(text) > 50:
-                    docs.append(Document(
+                    doc = Document(
                         url=src.url,
                         manufacturer=src.manufacturer,
                         mpn=src.mpn,
                         document_type=src.document_type,
                         text_content=text
-                    ))
-            except requests.RequestException as e:
-                logger.warning(f"Failed to fetch {url}: {e}")
-                
+                    )
+                    return doc, {"url": url, "document_type": src.document_type,
+                                 "status": "fetched", "chars": len(text)}
+                return None, {"url": url, "document_type": src.document_type,
+                              "status": "failed", "chars": len(text or ""),
+                              "error": f"no usable text ({len(text or '')} chars)"}
+            except Exception as e:
+                # Full detail goes to debug; the per-run summary below keeps
+                # production logs readable.
+                logger.debug("Fetch failed for %s: %s", url, e)
+                return None, {"url": url, "document_type": src.document_type,
+                              "status": "failed", "chars": None,
+                              "error": f"{type(e).__name__}: {e}"[:160]}
+
+        docs: List[Document] = []
+        statuses: List[dict] = []
+
+        # executor.map preserves input order, so trace entries stay aligned
+        # with the discovered source list regardless of completion order.
+        if not sources:
+            return []
+        workers = max(1, min(max_workers, len(sources)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            results = list(executor.map(_attempt, sources))
+
+        for doc, status in results:
+            statuses.append(status)
+            if doc is not None:
+                docs.append(doc)
+
+        # One-line per-run summary instead of a WARNING wall per dead URL.
+        fetched_n = sum(1 for s in statuses if s["status"] == "fetched")
+        skipped_n = sum(1 for s in statuses if s["status"] == "pdf_skipped")
+        failed = [s for s in statuses if s["status"] == "failed"]
+        if failed or skipped_n:
+            logger.info(
+                "RAG fetch: %d/%d sources fetched (%d pdf-skipped, %d unreachable) — "
+                "rows degrade to description-based attributes",
+                fetched_n, len(statuses), skipped_n, len(failed),
+            )
+            for s in failed:
+                logger.debug("  unreachable: %s (%s)", s["url"], s.get("error", "?"))
+
+        if statuses_out is not None:
+            statuses_out.extend(statuses)
         return docs
 
     def _chunk_documents(self, documents: List[Document]) -> List[Chunk]:

@@ -1,5 +1,10 @@
 """
-serve.py -- Serve the frontend dashboard locally.
+serve.py -- Serve the frontend dashboard locally (STATIC ONLY).
+
+Note: this server has no upload endpoint. For the Upload page to actually
+process files, run `python frontend/server.py` instead (Flask backend with
+POST /api/process). This script only exists for browsing an existing
+frontend/data snapshot.
 
 Optionally regenerates the data contract first, then serves the static app.
 
@@ -41,6 +46,8 @@ def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), QuietHandler)
     url = f"http://127.0.0.1:{args.port}/index.html"
     print(f"Serving frontend at {url}")
+    print("[serve] Static-only server: the Upload page cannot process files here.")
+    print("[serve] For a working Upload flow run: python frontend/server.py")
     webbrowser.open(url)
     try:
         server.serve_forever()

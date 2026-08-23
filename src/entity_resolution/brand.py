@@ -10,13 +10,17 @@ and an LLM fallback risks hallucinating brand names.
 
 from __future__ import annotations
 
+import os
 import re
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
 
 from src.entity_resolution._utils import normalize, similarity, coerce_code
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +76,22 @@ class BrandResolver:
         """
         Load brand list from the same master Excel used by ManufacturerResolver.
         Prefers a Brand_Name column; falls back to Manufacturer_Name.
+
+        If the master file is missing/unreadable the resolver degrades
+        gracefully: brand values pass through as-is with low confidence,
+        flagged for review (so downstream stages still run).
         """
+        self._empty = True
+        self._names: list[str] = []
+        self._codes: list[Optional[str]] = []
+        self._norm_names: list[str] = []
+        self._exact_map: dict[str, int] = {}
+        self._norm_map: dict[str, int] = {}
+
+        if not master_path or not os.path.exists(master_path):
+            logger.warning("Brand master not found (%s); pass-through mode (low confidence).", master_path)
+            return
+
         df = pd.read_excel(master_path, dtype=str).fillna("")
         df.columns = [c.strip() for c in df.columns]
 
@@ -91,11 +110,11 @@ class BrandResolver:
         self._norm_names = norm_names
 
         # O(1) lookup dicts — first occurrence wins on normalized collision
-        self._exact_map: dict[str, int] = {n: i for i, n in enumerate(names)}
-        self._norm_map: dict[str, int] = {}
+        self._exact_map = {n: i for i, n in enumerate(names)}
         for i, n in enumerate(norm_names):
             if n not in self._norm_map:
                 self._norm_map[n] = i
+        self._empty = False
 
     @staticmethod
     def _find_col(columns: list[str], keywords: list[str]) -> Optional[str]:
@@ -140,6 +159,8 @@ class BrandResolver:
             return BrandMatch(None, None, 0.0, "unresolved", False)
 
         raw = raw.strip()
+        if self._empty:
+            return BrandMatch(raw, None, 0.35, "pass-through", True)
         return (
             self._exact(raw)
             or self._normalized(raw)

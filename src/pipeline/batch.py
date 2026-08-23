@@ -5,22 +5,28 @@ import pandas as pd
 from typing import Optional, Tuple, List, Dict, Any
 
 from src.pipeline.orchestrator import PipelineOrchestrator
-from src.output.mapper import EXPECTED_OUTPUT_CSV, product_to_row
+from src.output.mapper import get_expected_headers, product_to_row
 
 logger = logging.getLogger(__name__)
 
 
 def _reorder_columns(output_df: pd.DataFrame) -> pd.DataFrame:
-    """Re-order columns strictly according to the reference delivery format."""
+    """
+    Re-order columns strictly according to the reference delivery format.
+
+    Header resolution is delegated to get_expected_headers(), which caches the
+    result and emits exactly ONE actionable warning when the official
+    reference CSV is absent — this function used to duplicate that warning on
+    every batch run.
+    """
     try:
-        reference_df = pd.read_csv(EXPECTED_OUTPUT_CSV, nrows=0, encoding="utf-8")
-        expected_columns = reference_df.columns.tolist()
+        expected_columns = get_expected_headers()
         for col in expected_columns:
             if col not in output_df.columns:
                 output_df[col] = ""
         return output_df[expected_columns]
     except Exception as e:
-        logger.warning("Could not strictly reorder columns based on reference: %s", e)
+        logger.warning("Could not strictly reorder columns: %s", e)
         return output_df
 
 
@@ -28,11 +34,20 @@ def _run_rows(
     orchestrator: PipelineOrchestrator,
     input_df: pd.DataFrame,
     collect_internal: bool = False,
+    progress_cb=None,
 ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    """Run the orchestrator over every row. Returns (delivery_rows, internal_products)."""
+    """Run the orchestrator over every row. Returns (delivery_rows, internal_products).
+
+    max_workers stays small by default: each row already fans out several
+    Groq LLM calls and the global pacer (LLM_MIN_INTERVAL) serializes their
+    starts against the token-per-minute cap. 3 workers overlap the parallel
+    web-fetch phase of one row with the LLM phases of others; override with
+    PIPELINE_WORKERS if your key allows more.
+    """
     import concurrent.futures
 
     total = len(input_df)
+    max_workers = int(os.getenv("PIPELINE_WORKERS", "3"))
 
     def _process_single(args):
         idx, row = args
@@ -47,32 +62,43 @@ def _run_rows(
 
     delivery: List[Dict[str, Any]] = []
     internal: List[Dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         for mapped, intern in executor.map(_process_single, input_df.iterrows()):
             delivery.append(mapped)
             if collect_internal and intern is not None:
                 internal.append(intern)
+            done += 1
+            if progress_cb is not None:
+                try:
+                    progress_cb(done, total)
+                except Exception:
+                    pass
 
     return delivery, (internal if collect_internal else None)
 
 
 def process_batch(
     input_df: pd.DataFrame,
-    master_path: str,
-    output_path: str,
+    master_path: Optional[str] = None,
+    output_path: str = "",
     limit: Optional[int] = None,
     internal_json_path: Optional[str] = None,
+    progress_cb=None,
 ) -> pd.DataFrame:
     """
     Processes a batch of raw product rows using the PipelineOrchestrator,
     and writes the fully formed 252-column dataset to output_path.
 
     :param input_df: DataFrame containing raw input rows.
-    :param master_path: Path to the manufacturer master Excel file.
+    :param master_path: Optional path to the manufacturer master Excel file.
+                        When missing/None the resolvers degrade to pass-through
+                        mode (low confidence, flagged for review).
     :param output_path: Where to save the output CSV.
     :param limit: Optional max number of rows to process (useful for testing).
     :param internal_json_path: Optional path to also write the rich internal
                                Product models (V1 — frontend data contract).
+    :param progress_cb: Optional callable(done, total) fired after each row.
     """
     orchestrator = PipelineOrchestrator(master_path=master_path)
 
@@ -80,7 +106,8 @@ def process_batch(
         input_df = input_df.head(limit)
 
     delivery_rows, internal_products = _run_rows(
-        orchestrator, input_df, collect_internal=internal_json_path is not None
+        orchestrator, input_df, collect_internal=internal_json_path is not None,
+        progress_cb=progress_cb,
     )
 
     output_df = pd.DataFrame(delivery_rows)

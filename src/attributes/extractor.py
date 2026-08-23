@@ -1,10 +1,13 @@
 import os
+import re
 import json
 import logging
 from typing import List, Dict, Any, Optional
 
 from src.preprocessing.models import ProductInput
+from src.preprocessing.understanding_model import ProductUnderstanding
 from src.rag.document import Chunk
+from src.llm_config import call_with_retry, completion_kwargs, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +85,15 @@ class AttributeExtractor:
 
         try:
             client = groq.Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model="llama-3.1-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                max_tokens=800,
-                temperature=0,
+            response = call_with_retry(
+                lambda: client.chat.completions.create(
+                    model=get_chat_model(),
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                    **completion_kwargs(get_chat_model(), 800),
+                ),
+                what="attribute extraction",
             )
             raw = response.choices[0].message.content.strip()
             
@@ -115,3 +121,96 @@ class AttributeExtractor:
         except Exception as e:
             logger.error("LLM attribute extraction failed: %s", e)
             return []
+
+    # ------------------------------------------------------------------
+    # Fallback: description-derived candidates (no web evidence required)
+    # ------------------------------------------------------------------
+
+    # Understanding field -> display label. model_number is skipped on
+    # purpose: it duplicates the MPN column.
+    _FIELD_LABELS = {
+        "material": "Material",
+        "size": "Size",
+        "finish": "Finish",
+        "color": "Color",
+        "shape": "Shape",
+        "pressure_rating": "Pressure Rating",
+        "temperature_rating": "Temperature Rating",
+        "voltage": "Voltage",
+        "amperage": "Amperage",
+        "wattage": "Wattage",
+        "thread_type": "Thread Type",
+        "connection_type": "Connection Type",
+        "end_type": "End Type",
+        "gender": "Gender",
+        "application": "Application",
+        "industry": "Industry",
+        "series": "Series",
+        "product_type": "Product Type",
+    }
+
+    # "400V" / "2.8-4 A" / "45 x 97 x 73 mm" / "150 lb" -> value + uom
+    _UOM_SPLIT = re.compile(r"^\s*([\d.,/\-\s]+?)\s*([A-Za-zµ°%]{1,6})\.?\s*$")
+
+    @classmethod
+    def _split_value_uom(cls, raw: Any) -> tuple:
+        """Split a trailing unit off a numeric-leading string. Best effort."""
+        text = str(raw).strip()
+        m = cls._UOM_SPLIT.match(text)
+        if m and re.search(r"\d", m.group(1)):
+            return m.group(1).strip(), m.group(2)
+        return text, None
+
+    def extract_from_description(
+        self, product: ProductInput, understanding: ProductUnderstanding
+    ) -> List[Dict[str, Any]]:
+        """
+        Deterministic fallback when NO manufacturer evidence could be
+        retrieved (dead URLs, PDF-only sources, LLM unavailable).
+
+        Candidate attributes come from the T4 product-understanding facts
+        parsed out of the part description — NOT invented by an LLM.
+
+        Honesty rules:
+          - source stays None: these are NOT web-grounded, so they must not
+            count toward grounding rate or show a fake citation
+          - confidence 0.35 (< the 0.7 review threshold) so the normalizer
+            flags every one of them needs_review=True for a human decision
+        """
+        candidates: List[Dict[str, Any]] = []
+        facts = understanding.known_facts()
+
+        for field_name in self._FIELD_LABELS:
+            value = facts.get(field_name)
+            if value is None or not str(value).strip():
+                continue
+            if field_name == "product_type":
+                # Identity, not a technical attribute — skip to avoid noise.
+                continue
+            value_text, uom = self._split_value_uom(value)
+            candidates.append({
+                "label": self._FIELD_LABELS[field_name],
+                "candidate_value": value_text,
+                "candidate_uom": uom,
+                "source": None,
+                "source_page": None,
+                "confidence": 0.35,
+            })
+
+        for name, value in (understanding.extra_attributes or {}).items():
+            if value is None or not str(value).strip():
+                continue
+            value_text, uom = self._split_value_uom(value)
+            candidates.append({
+                "label": str(name).replace("_", " ").title()[:60],
+                "candidate_value": value_text,
+                "candidate_uom": uom,
+                "source": None,
+                "source_page": None,
+                "confidence": 0.35,
+            })
+
+        if candidates:
+            logger.info("Description fallback produced %d candidate attribute(s) for %s",
+                        len(candidates), product.mfg_part_num or "row")
+        return candidates

@@ -18,6 +18,7 @@ from typing import Optional
 
 from src.preprocessing.models import ProductInput
 from src.preprocessing.understanding_model import ProductUnderstanding
+from src.llm_config import call_with_retry, completion_kwargs, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +147,9 @@ _KNOWN_FIELDS = {
 
 class ProductUnderstandingExtractor:
 
-    def __init__(self, model: str = "qwen/qwen3.6-27b"):
-        self._model = model
+    def __init__(self, model: str = ""):
+        self._model = model or get_chat_model()
+        self._unavailable_logged = False
 
     def extract(self, product: ProductInput) -> ProductUnderstanding:
         """
@@ -164,10 +166,13 @@ class ProductUnderstandingExtractor:
         )
 
         if llm_facts is None:
-            logger.warning(
-                "LLM unavailable for row %s — returning minimal understanding",
-                product.row_id,
-            )
+            if not self._unavailable_logged:
+                logger.warning(
+                    "LLM unavailable — returning minimal understanding for all rows "
+                    "(set GROQ_API_KEY to enable enrichment). First affected row: %s",
+                    product.row_id,
+                )
+                self._unavailable_logged = True
             return ProductUnderstanding(
                 source_desc=product.part_desc,
                 row_id=product.row_id,
@@ -200,14 +205,17 @@ class ProductUnderstandingExtractor:
 
         try:
             client = groq.Groq(api_key=api_key)
-            response = client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                max_tokens=512,
-                temperature=0,
+            response = call_with_retry(
+                lambda: client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=0,
+                    **completion_kwargs(self._model, 512),
+                ),
+                what="understanding",
             )
             raw = response.choices[0].message.content.strip()
         except Exception as e:
