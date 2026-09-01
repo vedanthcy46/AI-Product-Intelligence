@@ -11,31 +11,80 @@ const REVIEW_KEY = "unihack.reviews";
 /* ── Backend connection ──────────────────────────────────── */
 /* Environment-aware routing:
  *   - DEVELOPMENT  (page opened from the local Flask server: localhost /
- *     127.0.0.1)            -> ALWAYS the local server, relative paths
+ *     127.0.0.1)            -> try local first, then fallback to remote backends
  *   - PRODUCTION   (page hosted anywhere else: Render itself, GitHub Pages,
- *     file:// preview)      -> window.UNIHACK_BACKEND_URL from index.html
- * The deployed backend must allow CORS (it does — see server.py). */
+ *     file:// preview)      -> remote backends in priority order
+ * Each backend must allow CORS (they do — see server.py). */
+const REMOTE_BACKENDS = [
+  "https://ai-product-intelligence-6xfq.onrender.com",
+  "https://ai-product-intelligence-i5em.onrender.com",
+].map((url) => url.replace(/\/+$/, ""));
 const CONFIGURED_BACKEND = String(window.UNIHACK_BACKEND_URL || "").replace(/\/+$/, "");
 const DEV_HOSTNAMES = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 
+let activeBackend = null; // resolved base URL (or "" for same-origin)
+
 function backendBase() {
   const host = String(location.hostname || "").toLowerCase();
-  if (!host || location.protocol === "file:") return CONFIGURED_BACKEND;
-  if (DEV_HOSTNAMES.has(host)) return "";                 // dev -> local API
+  if (!host || location.protocol === "file:") {
+    return CONFIGURED_BACKEND || REMOTE_BACKENDS[0];
+  }
+  if (DEV_HOSTNAMES.has(host)) {
+    return "";
+  }
   try {
     if (CONFIGURED_BACKEND && new URL(CONFIGURED_BACKEND).origin === location.origin) {
-      return "";                                          // prod ON the backend itself
+      return "";
     }
   } catch (e) { /* malformed config -> fall through */ }
-  return CONFIGURED_BACKEND;
+  return CONFIGURED_BACKEND || REMOTE_BACKENDS[0];
 }
 
-/* Join base + path safely: relative paths ("data/x.json") must gain a "/"
- * against a remote base, but stay untouched when same-origin (base = ""). */
 function api(path) {
   const base = backendBase();
   if (!base) return path;
   return base + (path.startsWith("/") ? "" : "/") + path;
+}
+
+async function fetchWithFallback(path, options, backends) {
+  const lastIndex = backends.length - 1;
+  for (let i = 0; i < backends.length; i++) {
+    const base = backends[i];
+    const url = base + (path.startsWith("/") ? "" : "/") + path;
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      if (res.status < 500 && i < lastIndex) continue;
+      return res;
+    } catch (e) {
+      if (i < lastIndex) continue;
+      throw e;
+    }
+  }
+}
+
+/* Wrapper: fetch with automatic fallback across multiple backends.
+ * Only applies in dev mode (localhost/127.0.0.1) for API paths starting with /api/,
+ * or in production when the primary backend is unreachable / returns 5xx. */
+async function apiFetch(path, options = {}) {
+  const base = backendBase();
+  const isDev = DEV_HOSTNAMES.has(String(location.hostname || "").toLowerCase());
+  const isApiCall = path.startsWith("/api/");
+
+  if (isDev && isApiCall && !base) {
+    try {
+      const res = await fetch(path, options);
+      if (res.ok || res.status < 500) return res;
+    } catch (e) { /* network error */ }
+    return fetchWithFallback(path, options, REMOTE_BACKENDS);
+  }
+
+  if (isApiCall) {
+    const backends = base ? [base, ...REMOTE_BACKENDS.filter((b) => b !== base)] : [...REMOTE_BACKENDS];
+    return fetchWithFallback(path, options, backends);
+  }
+
+  return fetch(api(path), options);
 }
 
 const state = {
